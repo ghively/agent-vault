@@ -94,7 +94,7 @@ types:
   unknown:
     description: Holding-pen for files the deterministic classifier couldn't place
                  with enough confidence. Always paired with status `needs-review`.
-                 Findable by Gregory; never compiled until a human reclassifies.
+                 Findable by Agent Vault; never compiled until a human reclassifies.
     subtypes: [unknown]
     page_template: unknown
     human_gated: false

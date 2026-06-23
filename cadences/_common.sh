@@ -11,7 +11,7 @@ resolve_vault() {
     _script_dir="$(cd "$(dirname "$0")" && pwd)"
     VAULT="${1:-$(dirname "$_script_dir")}"
     if [ ! -d "$VAULT/registry" ]; then
-        echo "error: '$VAULT' is not a Gregory vault (no registry/ dir)" >&2
+        echo "error: '$VAULT' is not an Agent Vault (no registry/ dir)" >&2
         exit 2
     fi
     cd "$VAULT" || { echo "error: cannot cd into '$VAULT'" >&2; exit 2; }

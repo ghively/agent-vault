@@ -31,12 +31,12 @@ digits) and cross-linked to the documents that prove them.
 Then you ask it questions instead of digging:
 
 ```
-gregory find furnace            # fuzzy search
-gregory show bofa               # full record for one entity
-gregory expiring --days 90      # warranties / renewals lapsing soon
-gregory due                     # bills / tasks coming due
-gregory creds bofa              # the credential REFERENCE (not the secret)
-gregory list account            # everything of one type
+synapse find furnace            # fuzzy search
+synapse show bofa               # full record for one entity
+synapse expiring --days 90      # warranties / renewals lapsing soon
+synapse due                     # bills / tasks coming due
+synapse creds bofa              # the credential REFERENCE (not the secret)
+synapse list account            # everything of one type
 ```
 
 ### The one design choice that matters
@@ -72,7 +72,7 @@ feature â€” credential resolution â€” is described but not built.
 | `collections_importer.py` â€” Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV | âœ… **Real, working** | Bookkeeping import. |
 | `validate.py` â€” schema gate | âœ… **Real, working** | The smoke test every stage reuses. |
 | `cadences/*.sh` â€” daily/weekly/monthly wrappers | âœ… **Real, working** | Plain POSIX `sh`; wire to any runner. |
-| **Credential resolution** (turn a `creds` ref into the actual secret) | âœ… **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `gregory resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
+| **Credential resolution** (turn a `creds` ref into the actual secret) | âœ… **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `synapse resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
 | **File extractors** (turn documents into text) | âœ… **Real, working** | PDF, email (+attachments), JPEG/PNG (EXIF), text/CSV, **and now `.docx` / `.xlsx` / `.html`** (pure stdlib). Each degrades to empty text on error, never crashes. |
 | **Compile token efficiency** (contract 1.1) | âœ… **Real, working** | Source text is deterministically de-noised + budgeted before the LLM sees it; a fact-bearing line is never dropped; per-entity + aggregate token logging. The LLM still sees all real content. |
 | **Write-side secret guard** (keep secrets out of the vault) | âœ… **Real, working** | `secret_scan.py`: ingestion scans each source for secret-shaped strings and downgrades the stub to `needs-review` (never recording the secret); `validate.py` hard-fails any entity with a real credential in a frontmatter field. Two strictness tiers keep false positives out of the schema gate. |
@@ -103,10 +103,10 @@ order, from any runner.
 ```
         YOUR FILES                        THE WIKI                      YOU
    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”           â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”      â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-   â”‚ raw/             â”‚  ingest   â”‚ entities/<type>/*.md  â”‚ indexâ”‚ gregory find â”‚
-   â”‚  statements/     â”‚ â”€â”€â”€â”€â”€â”€â”€â”€â–º â”‚  (one page per thing) â”‚ â”€â”€â”€â–º â”‚ gregory show â”‚
-   â”‚  documents/      â”‚           â”‚                       â”‚      â”‚ gregory due  â”‚
-   â”‚  email/  media/  â”‚           â”‚  frontmatter (facts)  â”‚      â”‚ gregory ...  â”‚
+   â”‚ raw/             â”‚  ingest   â”‚ entities/<type>/*.md  â”‚ indexâ”‚ synapse find â”‚
+   â”‚  statements/     â”‚ â”€â”€â”€â”€â”€â”€â”€â”€â–º â”‚  (one page per thing) â”‚ â”€â”€â”€â–º â”‚ synapse show â”‚
+   â”‚  documents/      â”‚           â”‚                       â”‚      â”‚ synapse due  â”‚
+   â”‚  email/  media/  â”‚           â”‚  frontmatter (facts)  â”‚      â”‚ synapse ...  â”‚
    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜           â”‚  LINKS block          â”‚      â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
         (append-only)             â”‚  prose body  â—„â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€ compile (the LLM)
                                    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
@@ -392,7 +392,7 @@ about review items that have been sitting too long.
 - **Observability:** each cadence appends a JSON run record to
   `discovery/_runs.jsonl` (cadence, ts, rc, duration) â€” cron-debuggable.
 - **Log growth:** the append-only discovery logs are bounded on demand by
-  `python3 compact.py . --apply` (or `gregory compact --apply`), which dedups
+  `python3 compact.py . --apply` (or `synapse compact --apply`), which dedups
   `proposals.jsonl`/`promoted.jsonl` **without changing any promotion outcome**
   (writes `.bak` backups first). Run it quarterly or wire it into a cadence.
 - **Packaging:** `requirements.txt` (PyYAML required; pdfplumber/Pillow/

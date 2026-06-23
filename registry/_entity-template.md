@@ -16,7 +16,7 @@ sources_hash:               # hash of the source set; prose recompiles only when
 # aliases: []               # surface forms; mirrored into registry/aliases.yaml by promotion
 # location:                 # slug ref to a property/room entity
 # acquired:                 # YYYY-MM-DD
-# expires:                  # YYYY-MM-DD   (the temporal hook Gregory queries)
+# expires:                  # YYYY-MM-DD   (the temporal hook Agent Vault queries)
 # renews:                   # YYYY-MM-DD
 # serviced:                 # YYYY-MM-DD
 # due:                      # YYYY-MM-DD

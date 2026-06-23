@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 """
-gregory â€” the retrieval layer. Pure Python, NO LLM, no network.
+synapse â€” the retrieval layer. Pure Python, NO LLM, no network.
 
 Reads _index.json (built by build_index.py) and answers questions by FILTERING,
 never by reasoning. This is the whole point: no model = no hallucination surface.

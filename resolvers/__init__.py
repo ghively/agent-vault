@@ -19,7 +19,7 @@ CONTRACT (spec Â§7, never bends):
   - The vault stores only the REFERENCE. A plaintext secret never sits in a file.
   - Resolution happens here, ON DEMAND, at query time.
   - Resolved plaintext is NEVER written back to disk or the index. This package
-    returns it to the caller and forgets it; callers (e.g. `gregory resolve`)
+    returns it to the caller and forgets it; callers (e.g. `synapse resolve`)
     print it to stdout and nothing else.
 
 Adding a backend = drop one module in this package + add one stanza to
@@ -103,7 +103,7 @@ def load_config(vault="."):
 def _import_backend(module_name, scheme, vault):
     """Import the backend module named in resolvers.yaml. Ensures the vault dir
     is importable so the configured `resolvers.<name>` package path resolves
-    regardless of cwd (gregory may run with AGENT_VAULT_PATH pointing elsewhere)."""
+    regardless of cwd (synapse may run with AGENT_VAULT_PATH pointing elsewhere)."""
     if not module_name:
         module_name = f"resolvers.{scheme}"
     vpath = os.path.abspath(vault)

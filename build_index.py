@@ -3,7 +3,7 @@
 build_index.py — walk entities/, emit _index.json (and a human _index.md).
 
 Stage 1. Pure stdlib + pyyaml. No LLM, no network.
-This is what makes Gregory a pure lookup: every queryable field is pre-extracted here,
+This is what makes Agent Vault a pure lookup: every queryable field is pre-extracted here,
 so retrieval is "filter the index", never "reason over text".
 
 Usage:  python3 build_index.py [VAULT_DIR]   # defaults to current dir

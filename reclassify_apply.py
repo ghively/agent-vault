@@ -392,7 +392,7 @@ def apply_all(vault, only_slug=None, dry_run=False):
     with vault_lock(vault):
         out = _apply_all_locked(vault, only_slug, dry_run)
         # Moving entity files invalidates _index.json; rebuild it inside the lock
-        # so `gregory show`/`resolve` don't break for relocated entities.
+        # so `synapse show`/`resolve` don't break for relocated entities.
         if not dry_run and any(r.get("status") == "applied" for r in out):
             _refresh_index(vault)
     return out

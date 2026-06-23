@@ -6,7 +6,7 @@ Config (registry/resolvers.yaml):
 
     age:
       module: resolvers.age_file
-      keyfile: ~/.config/gregory/age.key     # private identity, NOT in the vault
+      keyfile: ~/.config/agentvault/age.key     # private identity, NOT in the vault
       store_dir: /volume1/secrets            # where the .age files live
 
 Ref → file mapping:
@@ -76,5 +76,5 @@ def resolve(ref, config):
             "age resolver: decrypted content is not UTF-8 text "
             "(binary secrets are not supported by the text resolver)")
     # Secret files conventionally carry a trailing newline; strip exactly one
-    # so `gregory resolve x | something` doesn't pass a stray \n.
+    # so `synapse resolve x | something` doesn't pass a stray \n.
     return secret[:-1] if secret.endswith("\n") else secret

@@ -503,7 +503,7 @@ def _import_file_locked(vault, path, dry_run=False):
 
 def _refresh_index(vault):
     """Rebuild _index.json in-process (same approach as ingest.refresh_index)
-    so newly imported entities are visible to `gregory` without waiting for
+    so newly imported entities are visible to `synapse` without waiting for
     the next daily ingest."""
     try:
         sys.path.insert(0, vault)

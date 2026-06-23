@@ -39,7 +39,7 @@ wiki/
 ├── discovery/
 │   └── proposals.jsonl        ← LLM's findings. APPEND-ONLY. LLM-WRITE, PYTHON-READ.
 ├── _index.md                  ← human-readable master index. PYTHON-WRITE ONLY.
-└── _index.json                ← machine index for Gregory. PYTHON-WRITE ONLY.
+└── _index.json                ← machine index for Agent Vault. PYTHON-WRITE ONLY.
 ```
 
 **Ownership at a glance** — the single most important table in this document:
@@ -49,12 +49,12 @@ wiki/
 | `raw/**` | Ingestion (append-only) | LLM (compile), Python |
 | `registry/schema.yaml` | **Promotion step only** | everyone |
 | `registry/aliases.yaml` | **Promotion step only** | everyone |
-| `registry/resolvers.yaml` | Human | Gregory (resolve) |
+| `registry/resolvers.yaml` | Human | Agent Vault (resolve) |
 | `entities/*` frontmatter | Python (ingest) | everyone |
 | `entities/*` link block | Python (regenerated each run) | everyone |
 | `entities/*` prose body | **LLM (compile) only** | everyone |
 | `discovery/proposals.jsonl` | **LLM (append-only)** | Promotion step |
-| `_index.*` | Python | Gregory, humans |
+| `_index.*` | Python | Agent Vault, humans |
 
 If two things write the same region, the design is wrong. There is exactly one author per region.
 
@@ -252,14 +252,14 @@ credential_ref: onepassword://Personal/recovery-phrase  # high-sensitivity, sepa
 
 **Rules:**
 - A field named `credential_ref` (or any value matching a known scheme) must **never** contain a plaintext secret. Ingestion actively scans for secret-shaped strings in `raw/` and refuses to write them into frontmatter — it writes a `needs-review` flag instead.
-- Gregory resolves a ref only on demand and only to answer the user; resolved plaintext is never persisted to disk or index.
+- Agent Vault resolves a ref only on demand and only to answer the user; resolved plaintext is never persisted to disk or index.
 - Adding a new backend = adding one resolver module + one stanza here. No schema change. This is the backend-independence you asked for.
 
 ---
 
-## 8. The index (`_index.json`) — what makes Gregory LLM-free
+## 8. The index (`_index.json`) — what makes Agent Vault LLM-free
 
-Gregory is a pure lookup because Python maintains a machine index covering every queryable field. Retrieval is "filter the index," not "reason over text."
+Agent Vault is a pure lookup because Python maintains a machine index covering every queryable field. Retrieval is "filter the index," not "reason over text."
 
 ```json
 {
@@ -280,7 +280,7 @@ Gregory is a pure lookup because Python maintains a machine index covering every
 }
 ```
 
-`gregory when is my bofa bill due` → normalize "bofa" through aliases → slug `bank-of-america` → read `facts.next_bill_due` → return. No model, no thinking, no hallucination surface. If fuzzy phrasing ever defeats the alias map, a *tiny* optional model is a fallback for query parsing only — never for answering. The design target is that it's never needed.
+`synapse when is my bofa bill due` → normalize "bofa" through aliases → slug `bank-of-america` → read `facts.next_bill_due` → return. No model, no thinking, no hallucination surface. If fuzzy phrasing ever defeats the alias map, a *tiny* optional model is a fallback for query parsing only — never for answering. The design target is that it's never needed.
 
 ---
 

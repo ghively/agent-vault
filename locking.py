@@ -4,7 +4,7 @@ locking.py â€” one vault-wide advisory write lock.
 
 Every process that MUTATES the vault (ingest, compile, promote, reclassify,
 collections import) takes this exclusive lock so overlapping runs serialize
-instead of racing. Readers (gregory, build_index, lint, validate) do not take it.
+instead of racing. Readers (synapse, build_index, lint, validate) do not take it.
 
 Without it, e.g. `reclassify_apply` moving an entity file + rewriting cross-refs
 could interleave with a `promote`/`compile` reading the same tree, corrupting

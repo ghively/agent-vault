@@ -26,7 +26,7 @@ resolvers:
   age:
     module: resolvers.age_file
     description: age-encrypted files on the NAS. Lowest dependency; good starting point.
-    keyfile: ~/.config/gregory/age.key      # private key, NOT in the vault
+    keyfile: ~/.config/agentvault/age.key      # private key, NOT in the vault
     store_dir: /volume1/secrets             # where the .age files live
 
   env:

@@ -332,7 +332,7 @@ def _parse_date(s):
 def format_human(report):
     if report["total_issues"] == 0:
         return ""  # cron-friendly silence on clean runs
-    lines = [f"# Gregory lint report  ({report['ts']})",
+    lines = [f"# Agent Vault lint report  ({report['ts']})",
              f"vault: {report['vault']}",
              f"aging threshold: {report['aging_days']} days",
              ""]

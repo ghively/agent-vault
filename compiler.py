@@ -70,7 +70,7 @@ PROMPT_CONTRACT_VERSION = "1.3"   # 1.1: deterministic source de-noise + total
 # amortize the KV cache for an identical leading `system` prompt across calls, so
 # the ~450-token system overhead is effectively free after the first entity.
 # Do NOT template it per-entity â€” that would defeat the server-side prefix cache.
-SYSTEM_PROMPT = """You are the compile pass of Gregory Vault, a harness-independent file-based wiki.
+SYSTEM_PROMPT = """You are the compile pass of Agent Vault, a harness-independent file-based wiki.
 
 You are given one entity stub (its frontmatter + linked source materials) and
 must write the PROSE BODY of its page. You are the ONLY non-deterministic

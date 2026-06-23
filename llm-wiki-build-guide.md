@@ -1,4 +1,4 @@
-# LLM Wiki ("Gregory") — Complete Taxonomy & Operational Build Guide
+# LLM Wiki ("Agent Vault") — Complete Taxonomy & Operational Build Guide
 
 > Companion to `llm-wiki-schema-spec.md` (the constitution). That document defines the *file format and ownership rules*. This document defines **the default taxonomy** (researched, not guessed) and **the full build order** — every component, in the sequence to build it.
 >
@@ -49,7 +49,7 @@ Twelve types. This is deliberately the complete set — expansive enough to swal
 - **software vs. its license** is the asset/proof split applied to software, and it's why there is *no* top-level `license` type. The *software* (Ableton, Photoshop, a tool) is `asset/software` — a singular thing you track. The *license/key/seat* that proves you may run it is a `document/license` linked to it — proof, exactly like a warranty. This keeps one retrieval path for everything that lapses (registrations, domains, software seats all read as license/warranty documents) and lets one subscription license many apps (one `document/license` → five `asset/software`). An earlier draft made `license` its own type on the logic that it "has an expiry and a renewal" — but that's an *attribute* (`expires:`/`renews:` fields), not an identity, so by the escalation ladder (§1.4) it never earned a type. Walked back.
 - **collection vs. asset** is the singular-vs-catalog split, and it's why `collection` *does* earn a top-level type (unlike `license`). A furnace is one `asset` with a serial, value, and warranty. An 800-title game library is not 800 assets — catalog items have a different field set (title/creator/format/platform/genre, not serial/value/warranty), a different lifecycle (acquired/played/read, not maintained/depreciated), and a different interaction pattern (browse/filter/recommend, not track-and-service). That triple divergence is exactly the type test. Subtypes carry the media kind (`game`, `music`, `film`, `book`, `tv`); genre/platform/format/publisher/completion are tags and fields. The line between `asset/software` and `collection/game`: *do I track this one specifically, or is it one of many I browse?*
 - **document** is the universal "proof" type. Receipts, warranties, manuals, contracts, tax records, IDs — and now licenses/keys. Almost everything else links *to* documents.
-- **maintenance** and **event** are time-anchored types that make Gregory able to answer "when is the next furnace service" and "when did I buy this" — they're what turn a static inventory into something that answers temporal questions.
+- **maintenance** and **event** are time-anchored types that make Agent Vault able to answer "when is the next furnace service" and "when did I buy this" — they're what turn a static inventory into something that answers temporal questions.
 
 ### 1.3 Cross-cutting attributes (frontmatter fields on ANY entity)
 
@@ -59,7 +59,7 @@ These are the expressive dimensions. Because they're attributes, not types, any 
 |-----------|-------|-------|
 | Location | `location:` | slug ref to a `property/room` entity. A thing's *where*, decoupled from its *what*. |
 | Status | `status:` | active / archived / sold / disposed / lapsed / lost / needs-review |
-| Lifecycle dates | `acquired:`, `expires:`, `renews:`, `serviced:`, `due:` | the temporal hooks Gregory queries |
+| Lifecycle dates | `acquired:`, `expires:`, `renews:`, `serviced:`, `due:` | the temporal hooks Agent Vault queries |
 | Value | `value:`, `value_as_of:` | for insurance/estate use; one of the top reasons these systems exist |
 | Identity | `serial:`, `model:`, `vin:`, `last4:` | identifiers; secrets still go to `credential_ref` |
 | Money link | `credential_ref:` | pluggable secret reference (spec §7) |
@@ -89,11 +89,11 @@ The files, before any code.
 - Write the entity page template (spec §2) — the three fenced regions.
 - **Test:** a hand-written sample entity for each of 3 types validates against the schema. No code yet, just prove the format holds.
 
-### Stage 1 — Retrieval first (Gregory), against hand-made pages (1–2 days)
+### Stage 1 — Retrieval first (Agent Vault), against hand-made pages (1–2 days)
 Counterintuitive, but build the *consumer* before the *producer*. It forces the schema to be queryable and gives you a working tool on day two.
 - `_index.json` generator: walks `entities/`, emits the machine index (spec §8).
-- `gregory` CLI: pure Python. Parses query → normalizes through `aliases.yaml` → filters `_index.json` → returns. **No LLM.** Commands like `gregory find <text>`, `gregory due`, `gregory expiring`, `gregory show <slug>`, `gregory creds <slug>` (resolves `credential_ref` on demand, never persists plaintext).
-- **Test:** hand-make 8–10 entity pages across types. Confirm Gregory answers "what's expiring this month," "show my BoA account," "where's the furnace manual." If a question is awkward to answer, the *schema* is wrong — fix it now, while pages are hand-made and cheap.
+- `synapse` CLI: pure Python. Parses query → normalizes through `aliases.yaml` → filters `_index.json` → returns. **No LLM.** Commands like `synapse find <text>`, `synapse due`, `synapse expiring`, `synapse show <slug>`, `synapse creds <slug>` (resolves `credential_ref` on demand, never persists plaintext).
+- **Test:** hand-make 8–10 entity pages across types. Confirm Agent Vault answers "what's expiring this month," "show my BoA account," "where's the furnace manual." If a question is awkward to answer, the *schema* is wrong — fix it now, while pages are hand-made and cheap.
 
 ### Stage 2 — Ingestion (Layer 1, deterministic Python) (3–5 days, the core investment)
 The robust, LLM-free classifier. This is where you spend real effort.
@@ -107,7 +107,7 @@ The robust, LLM-free classifier. This is where you spend real effort.
 - **Alias normalization:** every surface form resolved through `aliases.yaml` to a stable slug *before* a page is created — this is what prevents duplicate entities.
 - **Stub writer:** create/update entity files — frontmatter + regenerated link block, **empty prose body, `status: stub`**. Never writes prose.
 - **Index refresh** at the end of every run.
-- **Test:** feed it 20–30 real household files (documents, photos, a few emails — the core set you're starting with). Inspect the stubs. Measure: what % classified confidently, what landed in `needs-review`. Tune the pattern library. Gregory should already find the stubs (just no prose yet).
+- **Test:** feed it 20–30 real household files (documents, photos, a few emails — the core set you're starting with). Inspect the stubs. Measure: what % classified confidently, what landed in `needs-review`. Tune the pattern library. Agent Vault should already find the stubs (just no prose yet).
 
 ### Stage 3 — Compilation (Layer 2, the one LLM touchpoint) (2–3 days)
 Stub → prose. Model-agnostic by contract.
@@ -119,7 +119,7 @@ Stub → prose. Model-agnostic by contract.
 ### Stage 4 — The learning loop (promotion step, deterministic) (1–2 days)
 Close the loop that lets the schema grow itself safely.
 - **Promotion script** (spec §5.2): drains `proposals.jsonl`, applies thresholds, normalizes (collapses `bofa`/`BoA`→`bank-of-america`), graduates tags/subtypes/aliases automatically, parks new *types* and low-confidence items in a human review queue, stamps `schema.yaml`/`aliases.yaml`.
-- **Review queue:** a generated markdown file listing parked proposals with evidence + an `approve`/`reject` mechanism (even just editing a YAML file Gregory reads).
+- **Review queue:** a generated markdown file listing parked proposals with evidence + an `approve`/`reject` mechanism (even just editing a YAML file Agent Vault reads).
 - **Test:** run it against Stage-3 proposals. Confirm a new tag auto-promotes at threshold, a new type parks for you, an alias collapses a duplicate. Re-run ingestion — confirm the next pass is measurably smarter (builds a page it couldn't before).
 
 ### Stage 5 — Cadence & automation (½ day, but let it soak a week first)
@@ -136,7 +136,7 @@ Explicitly *after* the document/photo/email core soaks. Your game library — an
 - Same principle as everywhere: a new ingestion source is as swappable as the runner, the model, and the secret backend. The core never moves to accommodate it.
 
 ### Stage 7 — Home Assistant + voice (later, separate project)
-Also *after* the core soaks. HA and Whisper are just *another consumer* of Gregory, exactly like the CLI — they shell out to the same `gregory` query layer. Build nothing special in the core for them. When you get here: expose `gregory` over a tiny local HTTP shim, point an HA intent + Whisper at it. The core doesn't change. (This is the payoff of building the wiki harness-independent: voice is a 1-day bolt-on, not a re-architecture.)
+Also *after* the core soaks. HA and Whisper are just *another consumer* of Agent Vault, exactly like the CLI — they shell out to the same `synapse` query layer. Build nothing special in the core for them. When you get here: expose `synapse` over a tiny local HTTP shim, point an HA intent + Whisper at it. The core doesn't change. (This is the payoff of building the wiki harness-independent: voice is a 1-day bolt-on, not a re-architecture.)
 
 > **The shape of the whole system, restated:** a stable file-format core, with *four* independently swappable edges — **intake sources** (folder/inbox/forward/agent → `raw/`), the **runner** (cron/systemd/Hermes/n8n), the **compile model** (local mini/Claude/Hermes), and the **secret backend** (age/Vaultwarden/1Password). Media collections (Stage 6) are new intake sources; voice (Stage 7) is a new consumer. Nothing on any edge ever forces a change to the core. That's the entire design goal, and it's why this survives the churn that kills most home-grown systems.
 
@@ -153,7 +153,7 @@ Also *after* the core soaks. HA and Whisper are just *another consumer* of Grego
 **Python (the deterministic layers):**
 - ingestion: `python-magic`, `pdfplumber`/`pymupdf`, `exifread`, `extract_msg`, `pyyaml`
 - a `patterns/` library (your biller/bank/vendor dictionaries — this grows over time and is half the system's intelligence)
-- `gregory` CLI (stdlib + pyyaml is enough)
+- `synapse` CLI (stdlib + pyyaml is enough)
 - promotion script (stdlib)
 - resolver modules (one per secret backend; `age` first)
 
@@ -177,7 +177,7 @@ Also *after* the core soaks. HA and Whisper are just *another consumer* of Grego
 2. **Raw is append-only.** Never edited. This is what makes unattended automation safe.
 3. **The LLM proposes; deterministic code commits.** No non-deterministic process ever writes the vocabulary it later reads. This is the anti-rot valve.
 4. **Secrets are referenced, never stored.** Ingestion actively refuses to write secret-shaped strings into frontmatter.
-5. **Build the consumer (Gregory) before the producer.** A schema you can't query cleanly is a broken schema — find that out on day two, not month two.
+5. **Build the consumer (Agent Vault) before the producer.** A schema you can't query cleanly is a broken schema — find that out on day two, not month two.
 6. **Let it soak a week between stages.** Every dead version of this kind of system died from wiring four things at once.
 7. **The taxonomy self-governs by the escalation ladder** (Part 1.4): value→tag→subtype→type, cheapest first. The top level stays ~12 forever.
 8. **Read the logs.** Self-auditing only works if a human reads the audit. Put it on a recurring reminder.
@@ -190,7 +190,7 @@ Stage 0 + the first half of Stage 1, in one sitting:
 1. Scaffold the tree.
 2. Seed `schema.yaml` with the 12 types.
 3. Hand-write 3 entity pages (one `asset`, one `account`, one `document` — e.g. your furnace, your BoA checking, a warranty PDF's record).
-4. Write the `_index.json` generator and the bare `gregory find` / `gregory show` commands.
+4. Write the `_index.json` generator and the bare `synapse find` / `synapse show` commands.
 5. Ask one of those hand-made pages a real question.
 
 If that question is awkward to answer, the schema needs adjusting — and you'll know before a single line of ingestion code exists. That's the whole point of the order.

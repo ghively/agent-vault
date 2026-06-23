@@ -25,7 +25,7 @@ setup/usage instructions.
 - `build_index.py` â€” walks entities â†’ `_index.json` (+ human `_index.md`)
 - `synapse.py` â€” the CLI: `find`, `show`, `due`, `expiring`, `creds`, `list`
 
-**Verified:** schema validates (exit 0); index builds; Gregory answers `find furnace`,
+**Verified:** schema validates (exit 0); index builds; Agent Vault answers `find furnace`,
 `expiring --days N`, `show bofa` (via alias), `creds bofa` (reference only, secret never stored).
 The schema is queryable â€” every test question answered with no awkward workarounds.
 
@@ -45,7 +45,7 @@ The schema is queryable â€” every test question answered with no awkward wo
 - `tests/generate_fixtures.py` â€” deterministic synthetic fixtures (~25 files: bank
   statements, utility bills, warranties, order-confirmation emails, EXIF-tagged photos).
 - `tests/test_ingest.py` â€” sandbox driver: copies registry + fixtures into a tempdir,
-  runs ingest twice, validates everything, runs Gregory against the result.
+  runs ingest twice, validates everything, runs Agent Vault against the result.
 
 **Verified (Stage 2):** 25 fixtures â†’ 27 stubs (2 email attachments fan out).
 20/27 confident (â‰¥0.75) â€” banks, utilities, insurance, warranties, taxes, orders, one image-as-document.
@@ -261,7 +261,7 @@ call the cadence scripts:
 ```
 
 ```ini
-# systemd timer example (gregory-daily.timer)
+# systemd timer example (agentvault-daily.timer)
 [Timer]
 OnCalendar=daily
 Persistent=true
