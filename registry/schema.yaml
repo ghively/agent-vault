@@ -1,0 +1,138 @@
+# ============================================================================
+# registry/schema.yaml  —  THE CANONICAL VOCABULARY
+# ============================================================================
+# Author: the promotion step ONLY. (spec §3, §5)
+#   - The LLM may READ this so it prefers reusing existing vocabulary.
+#   - The LLM may NEVER write it. It proposes additions to discovery/proposals.jsonl.
+#   - Python's ingestion may READ this to classify.
+#   - Only the deterministic promotion step writes here.
+#
+# `human_gated: true`  -> new INSTANCES of this type need human approval before
+#                          a page is created (rare, structural types).
+# `page_template`      -> which prose structure the compile model should follow.
+# ============================================================================
+version: 1
+
+types:
+
+  asset:
+    description: Singular things you own with value/lifecycle (physical or intangible).
+    subtypes: [appliance, electronics, computer, furniture, tool, hvac, fixture,
+               jewelry, collectible, equipment, software]
+    page_template: asset
+    human_gated: false
+
+  vehicle:
+    description: Anything that drives, rolls, or flies. Split from asset due to distinct field set + lifecycle.
+    subtypes: [car, truck, motorcycle, trailer, rv, boat, ebike, lawn-equipment]
+    page_template: vehicle
+    human_gated: false
+
+  property:
+    description: Real estate and the structure itself. Anchors location for everything else.
+    subtypes: [residence, land, structure, room, outbuilding]
+    page_template: property
+    human_gated: true
+
+  financial-institution:
+    description: Where money/credit lives. The institution, not the account.
+    subtypes: [bank, credit-union, brokerage, lender, insurer]
+    page_template: institution
+    human_gated: true
+
+  account:
+    description: A specific account, login, or policy held AT an institution/vendor.
+    subtypes: [checking, savings, credit-card, loan, investment, insurance-policy,
+               utility-account, login]
+    page_template: account
+    human_gated: false
+
+  vendor:
+    description: An entity you pay or buy from.
+    subtypes: [utility, streaming, subscription, insurance, retailer,
+               service-provider, contractor, hoa]
+    page_template: vendor
+    human_gated: false
+
+  collection:
+    description: Catalog media you browse/filter rather than track one-by-one. (Stage 6 ingestion.)
+    subtypes: [game, music, film, book, tv, comic]
+    page_template: collection
+    human_gated: false
+
+  document:
+    description: Proof, records, paperwork — including the rights/keys that prove entitlement.
+    subtypes: [receipt, warranty, manual, contract, statement, id-document,
+               tax, medical, resume, certificate, photo-scan, license]
+    page_template: document
+    human_gated: false
+
+  media:
+    description: Personal media files (yours, not catalog media — that's `collection`).
+    subtypes: [family-photo, video, screenshot, audio]
+    page_template: media
+    human_gated: false
+
+  person:
+    description: Humans — household members and contacts.
+    subtypes: [household, contact, professional, emergency]
+    page_template: person
+    human_gated: true
+
+  maintenance:
+    description: Service events and schedules. Makes temporal questions answerable.
+    subtypes: [service-record, repair, inspection, recurring-task, recall]
+    page_template: maintenance
+    human_gated: false
+
+  event:
+    description: Time-anchored happenings.
+    subtypes: [purchase, claim, milestone, appointment, incident]
+    page_template: event
+    human_gated: false
+
+  unknown:
+    description: Holding-pen for files the deterministic classifier couldn't place
+                 with enough confidence. Always paired with status `needs-review`.
+                 Findable by Gregory; never compiled until a human reclassifies.
+    subtypes: [unknown]
+    page_template: unknown
+    human_gated: false
+
+# ----------------------------------------------------------------------------
+# TAGS — flat namespace. Auto-promoted by the promotion step at threshold (§5.2).
+# Seeded empty; grows organically from discovery proposals.
+# Each entry stamped with promotion date + sighting count when graduated.
+# ----------------------------------------------------------------------------
+tags:
+  heating: { promoted: 2026-05-21, count: 2 }
+  banking: { promoted: 2026-05-21, count: 1 }
+  primary: { promoted: 2026-05-21, count: 1 }
+  # Seed tags that ingestion's biller patterns emit. The promotion step (Stage 4)
+  # will eventually graduate new tags here automatically from discovery proposals.
+  internet:     { promoted: 2026-05-23, count: 1 }
+  insurance:    { promoted: 2026-05-23, count: 1 }
+  property-tax: { promoted: 2026-05-23, count: 1 }
+  # Category seed tags for the expanded biller library (vendor-pattern growth).
+  # Emitted as default_tags by patterns.yaml; seeded here so ingested stubs
+  # validate immediately (promotion graduates organically-found tags later).
+  utility:      { promoted: 2026-06-01, count: 1 }
+  telecom:      { promoted: 2026-06-01, count: 1 }
+  streaming:    { promoted: 2026-06-01, count: 1 }
+  subscription: { promoted: 2026-06-01, count: 1 }
+  retail:       { promoted: 2026-06-01, count: 1 }
+  credit-card:  { promoted: 2026-06-01, count: 1 }
+  brokerage:    { promoted: 2026-06-01, count: 1 }
+  healthcare:   { promoted: 2026-06-01, count: 1 }
+  travel:       { promoted: 2026-06-01, count: 1 }
+
+# ----------------------------------------------------------------------------
+# PROMOTION THRESHOLDS — the dial between "expands itself" and "expands into a mess".
+# Start conservative; raise auto-promote / shrink gating as you learn to trust it.
+# ----------------------------------------------------------------------------
+promotion:
+  new_tag:      { auto: true,  min_sightings: 3 }
+  new_alias:    { auto: true,  require_confidence: high, require_target_exists: true }
+  new_subtype:  { auto: true,  min_sightings: 2, require_parent_exists: true }
+  new_type:     { auto: false }                        # always human-gated
+  reclassify:   { auto: true,  require_confidence: high, require_target_in_registry: true }

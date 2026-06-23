@@ -1,0 +1,921 @@
+# ============================================================================
+# registry/patterns.yaml  —  CLASSIFIER VOCABULARY for ingestion (Stage 2)
+# ============================================================================
+# Half the system's intelligence lives here. Grows over time:
+#   - HUMAN can edit directly (add a new biller you see in real life).
+#   - PROMOTION step (Stage 4) will also append graduated discoveries here.
+#   - The LLM never writes this file (same anti-rot rule as schema/aliases).
+#
+# Two sections:
+#   billers  -> known external entities (banks, utilities, retailers). Each maps
+#               surface-form matches in extracted text to a stable identity
+#               PLUS optional cross-links into the existing entity graph.
+#   shapes   -> structural patterns ("this looks like a statement / warranty /
+#               order confirmation / insurance declaration"). Type-level shapes,
+#               vendor-agnostic.
+#
+# Confidence on each entry: how sure we are when this pattern fires alone.
+# The classifier composes signals — biller + shape produce a stronger result
+# than either alone (capped at 0.97 to leave headroom for human review).
+# ============================================================================
+version: 1
+
+billers:
+  - id: bofa
+    matches:
+      - "bank of america"
+      - "bofa"
+      - "bankofamerica.com"
+    aliases: ["bofa", "boa", "bank of america checking"]
+    institution_slug: bank-of-america
+    account_slug: bofa-checking
+    default_tags: [banking]
+    confidence: 0.95
+
+  - id: discover
+    matches:
+      - "discover bank"
+      - "discover card"
+      - "discover.com"
+    institution_slug: discover-bank
+    account_slug: discover-card
+    default_tags: [banking]
+    confidence: 0.92
+
+  - id: fidelity
+    matches:
+      - "fidelity brokerage"
+      - "fidelity investments"
+      - "fidelity.com"
+    institution_slug: fidelity
+    account_slug: fidelity-401k
+    confidence: 0.92
+
+  - id: chase
+    matches:
+      - "jpmorgan chase"
+      - "chase mortgage"
+      - "chase bank"
+    institution_slug: chase
+    account_slug: chase-mortgage
+    confidence: 0.92
+
+  - id: comcast
+    matches:
+      - "comcast"
+      - "xfinity"
+      - "xfinity.com"
+    vendor_slug: comcast
+    default_tags: [internet]
+    confidence: 0.93
+
+  - id: geico
+    matches:
+      - "geico"
+      - "government employees insurance"
+    institution_slug: geico
+    account_slug: geico-auto-policy
+    default_tags: [insurance]
+    confidence: 0.93
+
+  - id: amazon
+    matches:
+      - "amazon.com"
+      - "amazon order"
+      - "auto-confirm@amazon.com"
+    vendor_slug: amazon
+    confidence: 0.92
+
+  - id: costco
+    matches:
+      - "costco"
+      - "costco.com"
+      - "costco membership"
+    vendor_slug: costco
+    confidence: 0.92
+
+  - id: apple
+    matches:
+      - "apple.com"
+      - "email.apple.com"
+      - "app store"
+    vendor_slug: apple
+    confidence: 0.90
+
+  - id: newegg
+    matches:
+      - "newegg.com"
+      - "newegg"
+    vendor_slug: newegg
+    confidence: 0.90
+
+  - id: carrier
+    matches:
+      - "carrier corporation"
+      - "carrier furnace"
+    vendor_slug: carrier
+    asset_slug: carrier-furnace
+    confidence: 0.90
+
+  - id: lg
+    matches:
+      - "lg electronics"
+      - "lg dishwasher"
+    vendor_slug: lg
+    confidence: 0.85
+
+  - id: knox-county
+    matches:
+      - "knox county"
+      - "knox county trustee"
+    vendor_slug: knox-county-tn
+    default_tags: [property-tax]
+    confidence: 0.92
+
+  # ==========================================================================
+  # Expanded biller library. Match strings are kept specific (domains, full
+  # brand names) so short ambiguous tokens don't false-fire. default_tags must
+  # all exist in schema.yaml's tags block. Banks/brokerages link an institution
+  # + a placeholder account; vendors link a single vendor entity (auto-stubbed
+  # on first sight). Edit freely — this file is human-writable.
+  # ==========================================================================
+
+  # ---- Banks & card issuers ----
+  - id: wells-fargo
+    matches: ["wells fargo", "wellsfargo.com"]
+    institution_slug: wells-fargo
+    account_slug: wells-fargo-checking
+    default_tags: [banking]
+    confidence: 0.92
+  - id: citi
+    matches: ["citibank", "citi.com", "citicards.com", "citi card"]
+    institution_slug: citibank
+    account_slug: citi-card
+    default_tags: [credit-card]
+    confidence: 0.9
+  - id: capital-one
+    matches: ["capital one", "capitalone.com"]
+    institution_slug: capital-one
+    account_slug: capital-one-card
+    default_tags: [credit-card]
+    confidence: 0.9
+  - id: amex
+    matches: ["american express", "americanexpress.com"]
+    institution_slug: american-express
+    account_slug: amex-card
+    default_tags: [credit-card]
+    confidence: 0.9
+  - id: us-bank
+    matches: ["u.s. bank", "usbank.com"]
+    institution_slug: us-bank
+    account_slug: us-bank-checking
+    default_tags: [banking]
+    confidence: 0.9
+  - id: ally
+    matches: ["ally bank", "ally.com"]
+    institution_slug: ally-bank
+    account_slug: ally-savings
+    default_tags: [banking]
+    confidence: 0.9
+  - id: synchrony
+    matches: ["synchrony bank", "synchrony.com"]
+    institution_slug: synchrony
+    account_slug: synchrony-card
+    default_tags: [credit-card]
+    confidence: 0.88
+
+  # ---- Brokerages ----
+  - id: vanguard
+    matches: ["vanguard", "vanguard.com"]
+    institution_slug: vanguard
+    account_slug: vanguard-brokerage
+    default_tags: [brokerage]
+    confidence: 0.9
+  - id: schwab
+    matches: ["charles schwab", "schwab.com"]
+    institution_slug: charles-schwab
+    account_slug: schwab-brokerage
+    default_tags: [brokerage]
+    confidence: 0.9
+  - id: robinhood
+    matches: ["robinhood", "robinhood.com"]
+    institution_slug: robinhood
+    account_slug: robinhood-brokerage
+    default_tags: [brokerage]
+    confidence: 0.88
+
+  # ---- Payments ----
+  - id: paypal
+    matches: ["paypal", "paypal.com"]
+    vendor_slug: paypal
+    default_tags: [banking]
+    confidence: 0.88
+  - id: venmo
+    matches: ["venmo", "venmo.com"]
+    vendor_slug: venmo
+    default_tags: [banking]
+    confidence: 0.88
+
+  # ---- Insurance ----
+  - id: state-farm
+    matches: ["state farm", "statefarm.com"]
+    institution_slug: state-farm
+    account_slug: state-farm-policy
+    default_tags: [insurance]
+    confidence: 0.92
+  - id: allstate
+    matches: ["allstate", "allstate.com"]
+    institution_slug: allstate
+    account_slug: allstate-policy
+    default_tags: [insurance]
+    confidence: 0.92
+  - id: progressive
+    matches: ["progressive insurance", "progressive.com"]
+    institution_slug: progressive
+    account_slug: progressive-policy
+    default_tags: [insurance]
+    confidence: 0.9
+  - id: liberty-mutual
+    matches: ["liberty mutual", "libertymutual.com"]
+    institution_slug: liberty-mutual
+    account_slug: liberty-mutual-policy
+    default_tags: [insurance]
+    confidence: 0.9
+  - id: usaa
+    matches: ["usaa", "usaa.com"]
+    institution_slug: usaa
+    account_slug: usaa-policy
+    default_tags: [insurance]
+    confidence: 0.9
+  - id: nationwide
+    matches: ["nationwide insurance", "nationwide.com"]
+    institution_slug: nationwide
+    account_slug: nationwide-policy
+    default_tags: [insurance]
+    confidence: 0.88
+
+  # ---- Telecom / wireless ----
+  - id: att
+    matches: ["at&t", "att.com", "att.net"]
+    vendor_slug: att
+    default_tags: [telecom]
+    confidence: 0.9
+  - id: verizon
+    matches: ["verizon", "verizon.com", "verizonwireless.com"]
+    vendor_slug: verizon
+    default_tags: [telecom]
+    confidence: 0.9
+  - id: tmobile
+    matches: ["t-mobile", "t-mobile.com"]
+    vendor_slug: t-mobile
+    default_tags: [telecom]
+    confidence: 0.9
+
+  # ---- Internet / cable ----
+  - id: spectrum
+    matches: ["spectrum", "spectrum.net", "charter communications"]
+    vendor_slug: spectrum
+    default_tags: [internet]
+    confidence: 0.88
+  - id: cox
+    matches: ["cox communications", "cox.com"]
+    vendor_slug: cox
+    default_tags: [internet]
+    confidence: 0.88
+  - id: centurylink
+    matches: ["centurylink", "centurylink.net"]
+    vendor_slug: centurylink
+    default_tags: [internet]
+    confidence: 0.88
+
+  # ---- Utilities (power / gas / water / waste) ----
+  - id: pge
+    matches: ["pacific gas and electric", "pg&e", "pge.com"]
+    vendor_slug: pge
+    default_tags: [utility]
+    confidence: 0.9
+  - id: duke-energy
+    matches: ["duke energy", "duke-energy.com"]
+    vendor_slug: duke-energy
+    default_tags: [utility]
+    confidence: 0.9
+  - id: con-edison
+    matches: ["con edison", "consolidated edison", "coned.com"]
+    vendor_slug: con-edison
+    default_tags: [utility]
+    confidence: 0.9
+  - id: national-grid
+    matches: ["national grid", "nationalgrid.com"]
+    vendor_slug: national-grid
+    default_tags: [utility]
+    confidence: 0.88
+  - id: waste-management
+    matches: ["waste management", "wm.com"]
+    vendor_slug: waste-management
+    default_tags: [utility]
+    confidence: 0.88
+
+  # ---- Streaming ----
+  - id: netflix
+    matches: ["netflix", "netflix.com"]
+    vendor_slug: netflix
+    default_tags: [streaming]
+    confidence: 0.9
+  - id: spotify
+    matches: ["spotify", "spotify.com"]
+    vendor_slug: spotify
+    default_tags: [streaming]
+    confidence: 0.9
+  - id: hulu
+    matches: ["hulu", "hulu.com"]
+    vendor_slug: hulu
+    default_tags: [streaming]
+    confidence: 0.9
+  - id: disney-plus
+    matches: ["disney+", "disneyplus.com"]
+    vendor_slug: disney-plus
+    default_tags: [streaming]
+    confidence: 0.9
+  - id: hbo-max
+    matches: ["hbo max", "hbomax.com", "max.com"]
+    vendor_slug: hbo-max
+    default_tags: [streaming]
+    confidence: 0.88
+  - id: youtube-premium
+    matches: ["youtube premium", "youtube.com/premium"]
+    vendor_slug: youtube
+    default_tags: [streaming]
+    confidence: 0.85
+
+  # ---- Subscriptions / software ----
+  - id: audible
+    matches: ["audible", "audible.com"]
+    vendor_slug: audible
+    default_tags: [subscription]
+    confidence: 0.88
+  - id: adobe
+    matches: ["adobe", "adobe.com"]
+    vendor_slug: adobe
+    default_tags: [subscription]
+    confidence: 0.88
+  - id: microsoft365
+    matches: ["microsoft 365", "office 365", "microsoft.com"]
+    vendor_slug: microsoft
+    default_tags: [subscription]
+    confidence: 0.85
+  - id: google-one
+    matches: ["google one", "one.google.com"]
+    vendor_slug: google
+    default_tags: [subscription]
+    confidence: 0.85
+  - id: dropbox
+    matches: ["dropbox", "dropbox.com"]
+    vendor_slug: dropbox
+    default_tags: [subscription]
+    confidence: 0.88
+
+  # ---- Retailers / marketplaces ----
+  - id: walmart
+    matches: ["walmart", "walmart.com"]
+    vendor_slug: walmart
+    default_tags: [retail]
+    confidence: 0.88
+  - id: target
+    matches: ["target.com", "target redcard", "target order"]
+    vendor_slug: target
+    default_tags: [retail]
+    confidence: 0.88
+  - id: best-buy
+    matches: ["best buy", "bestbuy.com"]
+    vendor_slug: best-buy
+    default_tags: [retail]
+    confidence: 0.88
+  - id: home-depot
+    matches: ["home depot", "homedepot.com"]
+    vendor_slug: home-depot
+    default_tags: [retail]
+    confidence: 0.88
+  - id: lowes
+    matches: ["lowe's", "lowes.com"]
+    vendor_slug: lowes
+    default_tags: [retail]
+    confidence: 0.88
+  - id: kroger
+    matches: ["kroger", "kroger.com"]
+    vendor_slug: kroger
+    default_tags: [retail]
+    confidence: 0.88
+  - id: ebay
+    matches: ["ebay", "ebay.com"]
+    vendor_slug: ebay
+    default_tags: [retail]
+    confidence: 0.85
+  - id: etsy
+    matches: ["etsy", "etsy.com"]
+    vendor_slug: etsy
+    default_tags: [retail]
+    confidence: 0.85
+  - id: instacart
+    matches: ["instacart", "instacart.com"]
+    vendor_slug: instacart
+    default_tags: [retail]
+    confidence: 0.85
+  - id: doordash
+    matches: ["doordash", "doordash.com"]
+    vendor_slug: doordash
+    default_tags: [retail]
+    confidence: 0.85
+  - id: uber
+    matches: ["uber receipt", "uber.com", "uber eats"]
+    vendor_slug: uber
+    default_tags: [retail]
+    confidence: 0.82
+
+  # ---- Second growth batch ----
+  # More banks / credit unions
+  - id: pnc
+    matches: ["pnc bank", "pnc.com"]
+    institution_slug: pnc
+    account_slug: pnc-checking
+    default_tags: [banking]
+    confidence: 0.9
+  - id: td-bank
+    matches: ["td bank", "tdbank.com"]
+    institution_slug: td-bank
+    account_slug: td-checking
+    default_tags: [banking]
+    confidence: 0.9
+  - id: truist
+    matches: ["truist", "truist.com"]
+    institution_slug: truist
+    account_slug: truist-checking
+    default_tags: [banking]
+    confidence: 0.9
+  - id: regions
+    matches: ["regions bank", "regions.com"]
+    institution_slug: regions
+    account_slug: regions-checking
+    default_tags: [banking]
+    confidence: 0.88
+  - id: navy-federal
+    matches: ["navy federal", "navyfederal.org"]
+    institution_slug: navy-federal
+    account_slug: navy-federal-checking
+    default_tags: [banking]
+    confidence: 0.9
+  - id: fifth-third
+    matches: ["fifth third", "53.com"]
+    institution_slug: fifth-third
+    account_slug: fifth-third-checking
+    default_tags: [banking]
+    confidence: 0.88
+  # More P&C insurers
+  - id: farmers
+    matches: ["farmers insurance", "farmers.com"]
+    institution_slug: farmers
+    account_slug: farmers-policy
+    default_tags: [insurance]
+    confidence: 0.88
+  - id: travelers
+    matches: ["travelers insurance", "travelers.com"]
+    institution_slug: travelers
+    account_slug: travelers-policy
+    default_tags: [insurance]
+    confidence: 0.88
+  - id: american-family
+    matches: ["american family insurance", "amfam.com"]
+    institution_slug: american-family
+    account_slug: american-family-policy
+    default_tags: [insurance]
+    confidence: 0.88
+  # Health insurers
+  - id: unitedhealthcare
+    matches: ["unitedhealthcare", "uhc.com", "united healthcare"]
+    institution_slug: unitedhealthcare
+    account_slug: uhc-policy
+    default_tags: [healthcare]
+    confidence: 0.9
+  - id: aetna
+    matches: ["aetna", "aetna.com"]
+    institution_slug: aetna
+    account_slug: aetna-policy
+    default_tags: [healthcare]
+    confidence: 0.9
+  - id: cigna
+    matches: ["cigna", "cigna.com"]
+    institution_slug: cigna
+    account_slug: cigna-policy
+    default_tags: [healthcare]
+    confidence: 0.9
+  - id: blue-cross
+    matches: ["blue cross", "blue shield", "bcbs"]
+    institution_slug: blue-cross-blue-shield
+    account_slug: bcbs-policy
+    default_tags: [healthcare]
+    confidence: 0.88
+  - id: kaiser
+    matches: ["kaiser permanente", "kp.org"]
+    institution_slug: kaiser-permanente
+    account_slug: kaiser-policy
+    default_tags: [healthcare]
+    confidence: 0.9
+  - id: humana
+    matches: ["humana", "humana.com"]
+    institution_slug: humana
+    account_slug: humana-policy
+    default_tags: [healthcare]
+    confidence: 0.88
+  # More streaming
+  - id: peacock
+    matches: ["peacock tv", "peacocktv.com"]
+    vendor_slug: peacock
+    default_tags: [streaming]
+    confidence: 0.88
+  - id: paramount-plus
+    matches: ["paramount+", "paramountplus.com"]
+    vendor_slug: paramount-plus
+    default_tags: [streaming]
+    confidence: 0.88
+  - id: apple-tv-plus
+    matches: ["apple tv+", "tv.apple.com"]
+    vendor_slug: apple-tv-plus
+    default_tags: [streaming]
+    confidence: 0.85
+  - id: twitch
+    matches: ["twitch", "twitch.tv"]
+    vendor_slug: twitch
+    default_tags: [streaming]
+    confidence: 0.85
+  # More subscriptions / software
+  - id: nyt
+    matches: ["new york times", "nytimes.com"]
+    vendor_slug: nyt
+    default_tags: [subscription]
+    confidence: 0.88
+  - id: wsj
+    matches: ["wall street journal", "wsj.com"]
+    vendor_slug: wsj
+    default_tags: [subscription]
+    confidence: 0.88
+  - id: github
+    matches: ["github", "github.com"]
+    vendor_slug: github
+    default_tags: [subscription]
+    confidence: 0.85
+  - id: openai
+    matches: ["openai", "openai.com", "chatgpt plus"]
+    vendor_slug: openai
+    default_tags: [subscription]
+    confidence: 0.85
+  - id: patreon
+    matches: ["patreon", "patreon.com"]
+    vendor_slug: patreon
+    default_tags: [subscription]
+    confidence: 0.85
+  # Pharmacies / more retailers
+  - id: cvs
+    matches: ["cvs pharmacy", "cvs.com"]
+    vendor_slug: cvs
+    default_tags: [retail]
+    confidence: 0.86
+  - id: walgreens
+    matches: ["walgreens", "walgreens.com"]
+    vendor_slug: walgreens
+    default_tags: [retail]
+    confidence: 0.86
+  - id: ikea
+    matches: ["ikea", "ikea.com"]
+    vendor_slug: ikea
+    default_tags: [retail]
+    confidence: 0.86
+  - id: wayfair
+    matches: ["wayfair", "wayfair.com"]
+    vendor_slug: wayfair
+    default_tags: [retail]
+    confidence: 0.86
+  - id: chewy
+    matches: ["chewy", "chewy.com"]
+    vendor_slug: chewy
+    default_tags: [retail]
+    confidence: 0.86
+  - id: rei
+    matches: ["rei co-op", "rei.com"]
+    vendor_slug: rei
+    default_tags: [retail]
+    confidence: 0.85
+  - id: whole-foods
+    matches: ["whole foods", "wholefoodsmarket.com"]
+    vendor_slug: whole-foods
+    default_tags: [retail]
+    confidence: 0.85
+  - id: staples
+    matches: ["staples", "staples.com"]
+    vendor_slug: staples
+    default_tags: [retail]
+    confidence: 0.85
+  # MVNOs
+  - id: mint-mobile
+    matches: ["mint mobile", "mintmobile.com"]
+    vendor_slug: mint-mobile
+    default_tags: [telecom]
+    confidence: 0.88
+  - id: visible
+    matches: ["visible wireless", "visible.com"]
+    vendor_slug: visible
+    default_tags: [telecom]
+    confidence: 0.85
+  # Travel
+  - id: delta
+    matches: ["delta air lines", "delta.com"]
+    vendor_slug: delta
+    default_tags: [travel]
+    confidence: 0.88
+  - id: united-airlines
+    matches: ["united airlines", "united.com"]
+    vendor_slug: united-airlines
+    default_tags: [travel]
+    confidence: 0.86
+  - id: southwest
+    matches: ["southwest airlines", "southwest.com"]
+    vendor_slug: southwest
+    default_tags: [travel]
+    confidence: 0.86
+  - id: marriott
+    matches: ["marriott", "marriott.com"]
+    vendor_slug: marriott
+    default_tags: [travel]
+    confidence: 0.86
+  - id: hilton
+    matches: ["hilton", "hilton.com"]
+    vendor_slug: hilton
+    default_tags: [travel]
+    confidence: 0.86
+  - id: airbnb
+    matches: ["airbnb", "airbnb.com"]
+    vendor_slug: airbnb
+    default_tags: [travel]
+    confidence: 0.86
+
+# Structural shapes — what the document IS, regardless of vendor.
+# Each shape lists keyword phrases. min_matches = how many must appear.
+shapes:
+  - id: statement
+    type: document
+    subtype: statement
+    keywords:
+      - "statement period"
+      - "previous balance"
+      - "current balance"
+      - "ending balance"
+      - "beginning balance"
+      - "statement balance"
+      - "remaining balance"
+      - "principal paid"
+      - "interest paid"
+    min_matches: 2
+    confidence: 0.85
+
+  - id: bill
+    type: document
+    subtype: statement
+    keywords:
+      - "total due"
+      - "amount due"
+      - "due date"
+      - "billing period"
+      - "monthly charge"
+      - "minimum payment due"
+      - "next payment due"
+    min_matches: 2
+    confidence: 0.85
+
+  - id: warranty
+    type: document
+    subtype: warranty
+    keywords:
+      - "limited warranty"
+      - "warranted against"
+      - "warranty period"
+      - "warranty expires"
+      - "covered for"
+    min_matches: 1
+    confidence: 0.85
+
+  - id: manual
+    type: document
+    subtype: manual
+    keywords:
+      - "owner's manual"
+      - "installation guide"
+      - "user manual"
+      - "instruction manual"
+    min_matches: 1
+    confidence: 0.85
+
+  - id: insurance-declaration
+    type: document
+    subtype: contract
+    keywords:
+      - "policy number"
+      - "policy period"
+      - "named insured"
+      - "premium"
+      - "renewal date"
+    min_matches: 2
+    confidence: 0.85
+
+  - id: property-tax
+    type: document
+    subtype: tax
+    keywords:
+      - "property tax"
+      - "parcel id"
+      - "assessed value"
+      - "tax year"
+      - "trustee"
+    min_matches: 2
+    confidence: 0.88
+
+  - id: order-confirmation
+    type: event
+    subtype: purchase
+    keywords:
+      - "order #"
+      - "order confirmation"
+      - "order total"
+      - "estimated delivery"
+      - "thank you for your order"
+      - "your order has been"
+    min_matches: 1
+    confidence: 0.82
+
+  - id: shipment-notice
+    type: event
+    subtype: purchase
+    keywords:
+      - "has shipped"
+      - "shipping notification"
+      - "tracking"
+      - "shipped via"
+    min_matches: 1
+    confidence: 0.75
+
+  - id: receipt
+    type: document
+    subtype: receipt
+    keywords:
+      - "receipt from"
+      - "receipt #"
+      - "order id"
+      - "billed to"
+    min_matches: 1
+    confidence: 0.80
+
+  - id: renewal-notice
+    type: event
+    subtype: appointment
+    keywords:
+      - "renews on"
+      - "renewal date"
+      - "renews soon"
+      - "membership renews"
+    min_matches: 1
+    confidence: 0.78
+
+  - id: balance-alert
+    type: event
+    subtype: incident
+    keywords:
+      - "balance alert"
+      - "balance below"
+      - "low balance"
+    min_matches: 1
+    confidence: 0.80
+
+  - id: inspection-report
+    type: document
+    subtype: contract
+    keywords:
+      - "inspection report"
+      - "inspection date"
+      - "inspector"
+    min_matches: 2
+    confidence: 0.82
+
+  # ---- Expanded document shapes (map to existing document subtypes) ----
+  - id: paystub
+    type: document
+    subtype: statement
+    keywords: ["gross pay", "net pay", "ytd", "year-to-date", "withholding",
+               "pay period", "earnings statement", "deductions"]
+    min_matches: 2
+    confidence: 0.86
+  - id: w2
+    type: document
+    subtype: tax
+    keywords: ["w-2", "wages, tips", "federal income tax withheld",
+               "employer identification", "box 1", "social security wages"]
+    min_matches: 2
+    confidence: 0.88
+  - id: form-1099
+    type: document
+    subtype: tax
+    keywords: ["1099", "nonemployee compensation", "payer", "recipient",
+               "miscellaneous income"]
+    min_matches: 2
+    confidence: 0.86
+  - id: mortgage-statement
+    type: document
+    subtype: statement
+    keywords: ["principal balance", "escrow", "mortgage", "loan number",
+               "interest rate", "amount due"]
+    min_matches: 2
+    confidence: 0.86
+  - id: hoa-notice
+    type: document
+    subtype: statement
+    keywords: ["homeowners association", "hoa dues", "assessment",
+               "association fee", "covenant"]
+    min_matches: 2
+    confidence: 0.84
+  - id: medical-eob
+    type: document
+    subtype: medical
+    keywords: ["explanation of benefits", "claim number", "patient responsibility",
+               "allowed amount", "provider", "this is not a bill"]
+    min_matches: 2
+    confidence: 0.86
+  - id: lab-results
+    type: document
+    subtype: medical
+    keywords: ["lab results", "reference range", "specimen", "collected",
+               "test name", "result value"]
+    min_matches: 2
+    confidence: 0.84
+  - id: lease
+    type: document
+    subtype: contract
+    keywords: ["lease agreement", "lessor", "lessee", "monthly rent",
+               "security deposit", "term of lease", "tenant", "landlord"]
+    min_matches: 2
+    confidence: 0.86
+  - id: invoice
+    type: document
+    subtype: receipt
+    keywords: ["invoice", "invoice number", "invoice #", "bill to",
+               "net 30", "amount due", "remit to"]
+    min_matches: 2
+    confidence: 0.82
+  - id: vehicle-registration
+    type: document
+    subtype: id-document
+    keywords: ["vehicle registration", "license plate", "registration expires",
+               "plate number", "department of motor vehicles", "dmv"]
+    min_matches: 2
+    confidence: 0.86
+
+  # ---- Image-only shapes (applies_to filters by detected file kind) ----
+  # Without `applies_to`, "serial" appears in warranty PDFs too — we only want
+  # photo-scan classification when the file actually IS an image.
+  - id: device-label
+    type: document
+    subtype: photo-scan
+    applies_to: [jpeg, png]
+    keywords:
+      - "serial plate"
+      - "serial number"
+      - "data plate"
+      - "model number"
+      - "model:"
+      - "serial:"
+    min_matches: 1
+    confidence: 0.78
+
+  - id: receipt-scan
+    type: document
+    subtype: photo-scan
+    applies_to: [jpeg, png]
+    keywords:
+      - "receipt"
+      - "total"
+      - "subtotal"
+      - "purchase"
+    min_matches: 1
+    confidence: 0.68
+
+  - id: screenshot
+    type: media
+    subtype: screenshot
+    applies_to: [png, jpeg]
+    keywords:
+      - "screenshot"
+      - "screen capture"
+    min_matches: 1
+    confidence: 0.75
+
+# File-type priors — applied when no shape matches but the file type is
+# informative on its own. Lower confidence than a shape match.
+file_type_priors:
+  jpeg: { type: media, subtype: family-photo, confidence: 0.55 }
+  png:  { type: media, subtype: screenshot,   confidence: 0.55 }
+  email_personal: { type: event, subtype: incident, confidence: 0.40 }

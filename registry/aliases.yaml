@@ -1,0 +1,4 @@
+version: 1
+aliases:
+  "bofa": bofa-checking
+  "bank of america checking": bofa-checking

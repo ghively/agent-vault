@@ -1,0 +1,81 @@
+# ============================================================================
+# registry/resolvers.yaml  —  CREDENTIAL RESOLVER REGISTRY
+# ============================================================================
+# Author: HUMAN. (spec §7)
+# Maps a credential_ref SCHEME to a pluggable backend module.
+#
+# A credential_ref is a URI:  scheme://store/path
+#   e.g.  age://infra/synology-ssh
+#         vaultwarden://Banking/bofa-login
+#
+# RULES:
+#   - The vault stores only the REFERENCE. Never a plaintext secret. Ever.
+#   - Resolution happens at query time, in the resolver module, and the
+#     resolved plaintext is NEVER persisted to disk or index.
+#   - Adding a backend = add one stanza here + one resolver module. No schema change.
+#
+# Seeded with `age` (an age-encrypted file store on the NAS) as the
+# lowest-dependency starting backend. Add vaultwarden / onepassword / etc. later.
+# ============================================================================
+version: 1
+
+default_resolver: age
+
+resolvers:
+
+  age:
+    module: resolvers.age_file
+    description: age-encrypted files on the NAS. Lowest dependency; good starting point.
+    keyfile: ~/.config/gregory/age.key      # private key, NOT in the vault
+    store_dir: /volume1/secrets             # where the .age files live
+
+  env:
+    module: resolvers.env
+    description: Environment variables. For non-secret-ish refs and local dev only.
+
+  onepassword:
+    module: resolvers.op
+    description: 1Password via the `op` CLI. Run `op signin` (or set
+      OP_SERVICE_ACCOUNT_TOKEN) first. Ref = onepassword://<vault>/<item>[/<field>].
+    # account: my.1password.com               # optional: op --account
+    # default_field: password                 # used when the ref omits a field
+
+  bitwarden:
+    module: resolvers.bitwarden
+    description: Bitwarden via the `bw` CLI. Unlock first and export BW_SESSION.
+      Ref = bitwarden://<item>[/<field>].
+    # default_field: password
+
+  vaultwarden:
+    module: resolvers.bitwarden                # Vaultwarden speaks the bitwarden CLI
+    description: Self-hosted Vaultwarden. Point `bw config server <url>` at it,
+      then use the same `bw` auth flow. Ref = vaultwarden://<item>[/<field>].
+
+  pass:
+    module: resolvers.pass_store
+    description: Unix password store (`pass`). Ref = pass://<store>/<path>; returns
+      the first line. Auth via gpg-agent. Optional store_dir overrides PASSWORD_STORE_DIR.
+
+  gpg:
+    module: resolvers.gpg_file
+    description: gpg-encrypted files on the NAS. Ref = gpg://<store>/<path> ->
+      <store_dir>/<store>/<path>.gpg. Asymmetric via gpg-agent, or symmetric via
+      passphrase_env. Mirrors the age backend (store_dir containment enforced).
+    store_dir: /volume1/secrets
+    # passphrase_env: GPG_PASSPHRASE
+
+  secret-tool:
+    module: resolvers.secret_tool
+    description: GNOME keyring via `secret-tool`. Ref = secret-tool://<service>[/<account>].
+
+  keychain:
+    module: resolvers.macos_keychain
+    description: macOS Keychain via `security`. Ref = keychain://<service>[/<account>].
+
+  vault:
+    module: resolvers.vault
+    description: HashiCorp Vault via `vault kv get`. Ref = vault://<mount>/<path>[/<field>].
+      Endpoint/auth from VAULT_ADDR / VAULT_TOKEN env.
+    # default_field: password
+
+  # --- add more backends the same way: one module in resolvers/, one stanza here ---

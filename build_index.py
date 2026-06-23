@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+build_index.py — walk entities/, emit _index.json (and a human _index.md).
+
+Stage 1. Pure stdlib + pyyaml. No LLM, no network.
+This is what makes Gregory a pure lookup: every queryable field is pre-extracted here,
+so retrieval is "filter the index", never "reason over text".
+
+Usage:  python3 build_index.py [VAULT_DIR]   # defaults to current dir
+"""
+import sys, os, re, glob, json, datetime
+try:
+    import yaml
+except ImportError:
+    sys.exit("pyyaml required:  pip install pyyaml --break-system-packages")
+
+FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
+
+# fields lifted verbatim into the index if present
+PASSTHROUGH = ["slug", "type", "subtype", "title", "status", "confidence",
+               "tags", "aliases", "location", "value", "value_as_of",
+               "serial", "model", "vin", "last4", "created", "related"]
+# date fields collected under "dates" for temporal queries
+DATE_FIELDS = ["acquired", "expires", "renews", "serviced", "due"]
+
+
+def parse_entity(path, vault="."):
+    raw = open(path, encoding="utf-8").read()
+    m = FM_RE.match(raw)
+    if not m:
+        return None
+    fm = yaml.safe_load(m.group(1)) or {}
+    # Pin path relative to the vault, not to cwd — keeps the index stable
+    # no matter where build_index.py is invoked from (compiler.py calls it
+    # in-process, so cwd may not be the vault).
+    rec = {"path": os.path.relpath(path, vault).replace("\\", "/")}
+    for k in PASSTHROUGH:
+        if k in fm and fm[k] not in (None, "", []):
+            v = fm[k]
+            if isinstance(v, (datetime.date, datetime.datetime)):
+                v = str(v)
+            rec[k] = v
+    dates = {k: str(fm[k]) for k in DATE_FIELDS if fm.get(k)}
+    if dates:
+        rec["dates"] = dates
+    rec["has_credential"] = bool(fm.get("credential_ref"))
+    # normalize aliases to lowercase for matching; keep title as a searchable alias too
+    al = [str(a).lower() for a in fm.get("aliases", [])]
+    rec["_match"] = list({rec.get("slug", "").lower(), rec.get("title", "").lower(), *al} - {""})
+    return rec
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__); return 0
+    vault = args[0] if args else "."
+    files = sorted(glob.glob(os.path.join(vault, "entities", "*", "*.md")))
+    entities = [r for r in (parse_entity(f, vault) for f in files) if r]
+
+    index = {
+        "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "count": len(entities),
+        "entities": entities,
+    }
+    out_json = os.path.join(vault, "_index.json")
+    tmp = out_json + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, out_json)
+
+    # human-readable companion index, grouped by type
+    lines = [f"# Index ({len(entities)} entities)\n",
+             f"_generated {index['generated']}_\n"]
+    by_type = {}
+    for e in entities:
+        by_type.setdefault(e.get("type", "?"), []).append(e)
+    for t in sorted(by_type):
+        lines.append(f"\n## {t}\n")
+        for e in sorted(by_type[t], key=lambda x: x.get("title", "")):
+            tags = f"  `{', '.join(e['tags'])}`" if e.get("tags") else ""
+            lines.append(f"- **{e.get('title','?')}** ({e.get('subtype','')}) — `{e['slug']}`{tags}")
+    out_md = os.path.join(vault, "_index.md")
+    tmp = out_md + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, out_md)
+
+    print(f"indexed {len(entities)} entities -> {out_json}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
