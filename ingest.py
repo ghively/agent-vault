@@ -23,6 +23,12 @@ Usage:
 """
 import sys, os, re, json, hashlib, datetime, email, email.policy, io
 
+# Force UTF-8 stdout/stderr so entity slugs/titles with Unicode don't crash on
+# Windows consoles that default to cp1252.
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8")
+
 try:
     import yaml
 except ImportError:

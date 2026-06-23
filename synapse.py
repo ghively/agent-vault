@@ -23,6 +23,12 @@ Usage:  synapse <command> [args]   (run from vault dir, or set AGENT_VAULT_PATH)
 """
 import sys, os, re, json, datetime
 
+# Force UTF-8 stdout/stderr so entity titles with Unicode don't crash on
+# Windows consoles that default to cp1252.
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8")
+
 VAULT = os.environ.get("AGENT_VAULT_PATH", ".")
 FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
 

@@ -23,6 +23,12 @@ Usage:
 """
 import sys, os, json, shutil
 
+# Force UTF-8 stdout/stderr so em-dashes and other Unicode don't crash on
+# Windows consoles that default to cp1252.
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8")
+
 try:
     from locking import vault_lock
 except Exception:
