@@ -1,73 +1,121 @@
-# AGENTS.md â€” `agent-vault` (embedded document wiki)
+# AGENTS.md - `agent-vault` (Agent Vault: the knowledge-wiki app)
 
-> A harness-independent, **file-based** household knowledge wiki â€” the repo's
-> original app, now embedded in SynapseNAS. Parent: [../AGENTS.md](../AGENTS.md).
-> Full docs: [`README.md`](README.md), [`DOCS.md`](DOCS.md),
+> The authoritative **structure + invariant reference** for Agent Vault. The vault
+> Claude Code automations (vault-keeper, vault-doctor, the `/vault-*` skills, the
+> guardian hooks) read THIS file as their source of truth. Parent: [../AGENTS.md](../AGENTS.md).
+> Deep docs: [`README.md`](README.md), [`DOCS.md`](DOCS.md),
 > [`llm-wiki-schema-spec.md`](llm-wiki-schema-spec.md) (the "constitution").
 
-## Core discipline
+A harness-independent, **file-based** household knowledge wiki - the repo's original
+app, now the platform's central pivot piece. It runs standalone (cron/systemd) and is
+also driven by the server (which shells out to it). Nothing here imports the server.
 
-The **LLM writes prose only** (one touchpoint: `compiler.py`). Everything else â€”
-facts, classification, vocabulary, retrieval â€” is **deterministic Python**. This
-eliminates hallucination risk and keeps the vault auditable.
+## The core invariant (never break this)
 
-**One author per file region** (enforced):
+The **LLM writes prose only** (one touchpoint: `compiler.py`). Everything else - facts,
+classification, vocabulary, retrieval - is **deterministic Python**. **The LLM proposes;
+deterministic code commits.** This eliminates hallucination risk and keeps the vault
+auditable. Every automation that touches this app exists to uphold the invariant, not
+erode it.
+
+## Region ownership (per entity `.md` file)
 
 | Region | Author | Rule |
 |--------|--------|------|
-| Frontmatter | Python (ingest/promote) | LLM may set only `status`, `compiled_from_hash` |
-| `LINKS:BEGIN/END` block | Python (regenerated each run) | from `related:` |
-| Prose body | LLM (`compiler.py`) | never invents facts â€” uses `[NEEDS SOURCE: â€¦]` |
+| Frontmatter | Python (`ingest`/`promote`) | the LLM may set ONLY `status` and `compiled_from_hash` |
+| `LINKS:BEGIN/END` block | Python (regenerated each run from `related:`) | the LLM never edits it |
+| Prose body | LLM (`compiler.py`) | never invents facts - uses `[NEEDS SOURCE: ...]` |
 
-## Pipeline
+## Write-ownership map (who may write each path)
+
+This is what the guardian hook (`.claude/hooks/vault_guard.py`) enforces.
+
+| Path | Writer | Hand-edit by an agent? |
+|------|--------|------------------------|
+| `registry/schema.yaml` | `promote.py` / `review.py` ONLY | **BLOCKED** - grow via `/vault-add-entity-type` |
+| `registry/aliases.yaml` | `promote.py` ONLY | **BLOCKED** - grow via promote/review |
+| `registry/patterns.yaml` | human + promotion-append | allowed (classifier vocabulary) |
+| `registry/resolvers.yaml` | human only | allowed (credential backend config) |
+| `registry/_entity-template.md` | human | allowed (structural template) |
+| `raw/**` | append-only (sources) | adding new files OK; **never modify/delete** existing - WARNED |
+| `discovery/*.jsonl` | append-only (scripts) | **never hand-edit** (corrupts audit/proposals) - WARNED |
+| `entities/**/*.md` | ingest (frontmatter/LINKS) + compiler (prose) | edit only via the pipeline / recipes, honoring region ownership |
+| `_index.json` / `_index.md` | `build_index.py` only | regenerated; never hand-edit |
+
+## Pipeline + exact CLI signatures
 
 ```
-raw/ (append-only sources)
-  â””â”€ ingest.py     classify deterministically â†’ entity stubs (facts, no prose)
-  â””â”€ compiler.py   THE LLM TOUCHPOINT: stub â†’ prose  (Ollama, or mock for CI)
-  â””â”€ promote.py    learn vocabulary: proposals â†’ registry (deterministic commit)
-  â””â”€ review.py     human approve/reject (gated types/proposals)
-  build_index.py   reindex; synapse.py = query CLI
+raw/ (append-only)
+  -> ingest.py .       classify deterministically -> entity stubs (facts, no prose)
+  -> compiler.py .     THE LLM TOUCHPOINT: stub -> prose   (AGENT_VAULT_COMPILER=ollama|mock)
+  -> promote.py .      learn vocabulary: proposals -> registry (deterministic commit)
+  -> review.py . ...   human approve/reject (gated types/proposals/entities)
+  build_index.py .     (re)build _index.json
+  synapse.py <cmd>     query CLI: find|show|expiring|due|creds|resolve|list|compact
+  validate.py <vault>  schema gate (exit 0 = valid)
+  lint.py <vault>      operational audit (exit 1 if any findings)
 ```
 
-Cadence scripts wire it to cron/systemd: `cadences/daily.sh` (ingest+validate),
-`weekly.sh` (full LLM pass), `monthly.sh` (validate+lint).
+All scripts take the vault dir as `argv` (cadences `cd` into the vault and pass `.`).
+`review.py` verbs: `list` / `show <id>` / `approve <id>` / `reject <id>` /
+`approve-entity <type/slug>` / `reject-entity <type/slug>` (each takes `--reason`).
 
-## Module inventory
+## Cadences (`cadences/*.sh VAULT_DIR`)
 
-| Module | Role |
-|--------|------|
-| `ingest.py` | classify `raw/` â†’ stubs; auto-stub missing `related:` targets |
-| `compiler.py` | single LLM write (prose); `AGENT_VAULT_COMPILER=ollama|mock` |
-| `promote.py` | sole writer of registry vocabulary (auto/queue/defer/reject) |
-| `build_index.py` / `synapse.py` | index builder / query CLI |
-| `validate.py` / `lint.py` | schema gate / read-only operational audit |
-| `review.py` / `reclassify_apply.py` | human approve-reject / apply reclassifications |
-| `collections_importer.py` | catalog media (Steam/Goodreads/IMDB/â€¦) |
-| `secret_scan.py` / `compact.py` / `locking.py` | secret guard / log compaction / write lock |
+- `daily.sh` - `ingest` + `validate` (cheap; safe hourly).
+- `weekly.sh` - `ingest -> compile -> promote -> validate` (the LLM pass; each step runs
+  even if a prior fails; last failing rc is the run rc).
+- `monthly.sh` - `validate` + `lint` (read-only audit; lint findings are notifications).
 
-## Directories
+## Lint checks (`lint.py`) and their deterministic repairs
 
-`registry/` (vocabulary â€” Python-write only, except `resolvers.yaml`), `entities/`
-(12-type taxonomy, one `.md` per entity), `raw/` (append-only sources), `discovery/`
-(append-only proposals + audit logs), `resolvers/` (9 credential backends),
-`cadences/` (shell scripts), `tests/`.
+| Check `kind` | Meaning | Repair |
+|--------------|---------|--------|
+| `broken_ref` | a `related:` target has no entity file | re-run `ingest.py .` (auto-stubs missing targets) |
+| `stub_with_prose` | `status: stub` but the body has prose | flip status via `review.py` / recompile |
+| `compiled_without_prose` | `status: compiled` but no prose | recompile (`compiler.py .`) |
+| `compile_drift` | `sources_hash` != `compiled_from_hash` | recompile the drifted entities |
+| `aging_needs_review` | a `needs-review` entity is old | surface to a human (`review.py approve-entity`/`reject-entity`) |
+| `aging_queue` | a queued proposal is old | surface to a human (`review.py list`/`approve`/`reject`) |
+| `stuck_reclassify` | a queued reclassify not applied | `reclassify_apply.py` (human-approved) |
+| `raw_not_ingested` | a `raw/` file never ingested | `ingest.py .` |
+| `manifest_orphan` | manifest record with no raw file | investigate (file moved/removed) |
+| `ingest_error` | a file errored during ingest | inspect the source; fix extractor/patterns |
 
-## Integration with SynapseNAS â€” keep this boundary
+## Secrets
 
-Agent Vault is **isolated**. The server **never imports** it:
+Referenced, never stored: `scheme://store/path` URIs only (`credential_ref:`).
+`validate.py` + `secret_scan.py` reject plaintext-shaped secrets. Resolution is on-demand
+(`synapse resolve <slug>`) and never persisted. Resolver backends live in `resolvers/`
+(config in `registry/resolvers.yaml`, human-only).
 
-- Reads: `server/vault.py` parses the file contract directly (read-only).
-- Mutations: `server/actions.py` **shells out** to `review.py` / `synapse.py`, then
-  re-runs `build_index.py`.
+## Compiler contract
 
-The file contract is the only interface. Don't add in-process coupling.
+`compiler.py` stamps proposals with `PROMPT_CONTRACT_VERSION` + model identity. Changing
+the prompt/proposal shape requires a version bump (see `/vault-extend-compiler`) so
+changes are audited. `AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI).
+
+## Integration boundary (do not cross)
+
+The server **never imports** this app. Reads: `server/vault.py` parses the file contract.
+Mutations: `server/actions.py` shells out to `synapse.py`/`review.py` then re-runs
+`build_index.py`. Keep it file/CLI-contract only - no in-process coupling.
+
+## The vault automation suite (`.claude/`)
+
+These manage/protect/develop/extend this app (they are NOT app code):
+- Agents: `vault-keeper` (structure-aware guardian/lead), `vault-doctor` (troubleshoot).
+- Skills: `/vault-run` (operate the pipeline), `/vault-doctor`, `/vault-add-entity-type`,
+  `/vault-add-source` (new file-type/media extractor), `/vault-add-resolver`,
+  `/vault-extend-compiler`, `/vault-spawn-agent`.
+- Hooks: `vault_guard` (block hand-edits to schema/aliases; warn on append-only) +
+  `vault_gate` (run `validate.py`+`lint.py` after any `agent-vault/` change).
 
 ## Gotchas
 
-- Secrets are **referenced, never stored**: `scheme://store/path` URIs only;
-  `validate.py` + `secret_scan.py` enforce no plaintext.
-- `raw/` is immutable/append-only; everything is idempotent (hashes, manifest,
-  append-only logs). Preserve both properties.
-- Tests run via the repo-root `run_tests.sh` (plain Python), not pytest; CI uses
-  `AGENT_VAULT_COMPILER=mock` (no Ollama).
+- `raw/` and `discovery/*.jsonl` are append-only; everything is idempotent (hashes,
+  manifest, append-only logs). Preserve both.
+- Tests run via the repo-root `run_tests.sh` (plain Python, not pytest); CI uses
+  `AGENT_VAULT_COMPILER=mock`. Any in-app change must keep `validate.py` clean.
+- Never add a non-deterministic writer of vault state; the only LLM write is
+  `compiler.py` prose.
