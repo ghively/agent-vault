@@ -67,6 +67,11 @@ All scripts take the vault dir as `argv` (cadences `cd` into the vault and pass 
   even if a prior fails; last failing rc is the run rc).
 - `monthly.sh` - `validate` + `lint` (read-only audit; lint findings are notifications).
 
+`run_cadence.py <kind> [VAULT_DIR]` is the **cross-platform** (Windows-safe) equivalent:
+pure Python, runs each stage via `sys.executable` and appends the same `discovery/_runs.jsonl`
+record. The GUI (`server/jobs.py`) invokes this, not the `.sh` wrappers; the `.sh` files remain
+for cron/systemd on the Linux appliance.
+
 ## Lint checks (`lint.py`) and their deterministic repairs
 
 | Check `kind` | Meaning | Repair |
