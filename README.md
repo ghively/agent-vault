@@ -1,4 +1,4 @@
-﻿# Agent Vault
+# Agent Vault
 
 A harness-independent LLM wiki for managing a household. The contract is the files;
 everything around them (intake, runner, compile model, secret backend) is swappable.

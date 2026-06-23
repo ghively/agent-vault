@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ingest.py â€” Stage 2. Walk raw/, classify deterministically, write entity stubs.
 

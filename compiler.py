@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 compiler.py â€” Stage 3. THE single LLM touchpoint.
 

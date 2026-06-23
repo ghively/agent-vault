@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 resolvers â€” credential resolution (spec Â§7).
 

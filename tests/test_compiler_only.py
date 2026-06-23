@@ -1,4 +1,4 @@
-﻿"""--only compiles a single targeted entity. Uses the MockClient (offline)."""
+"""--only compiles a single targeted entity. Uses the MockClient (offline)."""
 import os
 import shutil
 import subprocess

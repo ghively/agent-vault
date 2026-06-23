@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 locking.py â€” one vault-wide advisory write lock.
 

@@ -1,4 +1,4 @@
-﻿# AGENTS.md â€” `agent-vault` (embedded document wiki)
+# AGENTS.md â€” `agent-vault` (embedded document wiki)
 
 > A harness-independent, **file-based** household knowledge wiki â€” the repo's
 > original app, now embedded in SynapseNAS. Parent: [../AGENTS.md](../AGENTS.md).

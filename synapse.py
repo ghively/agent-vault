@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 synapse â€” the retrieval layer. Pure Python, NO LLM, no network.
 

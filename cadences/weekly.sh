@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # ============================================================================
 # cadences/weekly.sh â€” the expensive cadence (the LLM touchpoint).
 #

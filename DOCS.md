@@ -1,4 +1,4 @@
-﻿# Agent Vault â€” Full Documentation
+# Agent Vault â€” Full Documentation
 
 This document explains, in plain terms, **what Agent Vault is, what is actually
 built versus scaffolded, how the pieces fit together, and how to run it on your
