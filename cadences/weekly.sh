@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================================
-# cadences/weekly.sh â€” the expensive cadence (the LLM touchpoint).
+# cadences/weekly.sh -- the expensive cadence (the LLM touchpoint).
 #
 # ingest -> compile -> promote -> validate. Each step runs even if an earlier
 # one failed, so a single per-entity compile timeout (compiler.py exits 0 on
@@ -29,7 +29,7 @@ python3 ingest.py .   || { rc=$?; detail="$detail ingest(rc=$rc)"; }
 #    timeouts don't block promote/validate below.
 python3 compiler.py . || { crc=$?; rc=$crc; detail="$detail compile(rc=$crc)"; }
 
-# 3. Drain discoveries into the registry â€” runs regardless of compile outcome.
+# 3. Drain discoveries into the registry -- runs regardless of compile outcome.
 python3 promote.py .  || { prc=$?; rc=$prc; detail="$detail promote(rc=$prc)"; }
 
 # 4. Validate the resulting tree.
@@ -39,6 +39,6 @@ record_run weekly "$rc" "$(( $(date +%s) - start ))" "${detail:-ok}"
 if [ "$rc" -eq 0 ]; then
     echo "weekly: ok ($(date -u +%FT%TZ))"
 else
-    echo "weekly: completed with failures ($detail) â€” see discovery/_runs.jsonl" >&2
+    echo "weekly: completed with failures ($detail) -- see discovery/_runs.jsonl" >&2
 fi
 exit "$rc"
