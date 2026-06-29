@@ -239,6 +239,8 @@ agent-vault/
 â”œâ”€â”€ registry/
 â”‚   â”œâ”€â”€ schema.yaml          â† canonical vocabulary. PROMOTION STEP writes only.
 â”‚   â”œâ”€â”€ aliases.yaml         â† surface form â†’ slug. PROMOTION STEP writes only.
+│   ├── patterns.yaml        ← classifier vocabulary (billers + shapes). HUMAN + PROMOTION writes.
+│   ├── field_mappings.yaml  ← learned field-extraction regexes. PROMOTION STEP writes only.
 â”‚   â”œâ”€â”€ resolvers.yaml       â† credential scheme â†’ backend. HUMAN writes.
 â”‚   â””â”€â”€ _entity-template.md  â† page template (3 ownership-fenced regions)
 â”œâ”€â”€ raw/                     â† immutable source documents. APPEND-ONLY. (system boundary)
@@ -317,3 +319,26 @@ see a vendor your file collection cares about â€” same shape as the seeded 
 2. `raw/` is append-only.
 3. The LLM proposes; deterministic code commits. No non-deterministic write to the vocabulary.
 4. Secrets are referenced (`scheme://store/path`), never stored plaintext.
+
+## The learning loop
+
+The vault learns at **three levels**, all through the same propose →
+deterministic-validate → promote gate:
+
+1. **Taxonomy** — new types, subtypes, tags, and aliases → `schema.yaml` / `aliases.yaml`.
+2. **Detection** — new billers and shapes → `patterns.yaml` (hand-written entries are the
+   trusted base; promote-appended entries are evidence-backed + audited).
+3. **Field extraction** — learned regex mappings → `field_mappings.yaml` (promote-only writer).
+
+### Learned field-mapping safety
+
+A promoted field mapping runs against every future ingest, so a bad regex
+(catastrophic backtracking, a capture that never fires, or one that captures a
+secret) silently corrupts intake. That's why `new_field_mapping` is **always
+human-gated** and must pass a **deterministic validation gate** before promotion:
+compiles, bounded (≤ 200 chars / ≤ 2 groups), ReDoS-safe (no nested quantifier),
+matches its evidence, parses per its declared type, not secret-shaped, valid
+slugs. `review.py` re-runs this gate at approval time — a human click can never
+bypass it. Field extraction is strictly additive to built-ins and secret-scanned
+at ingest. The core invariant is unchanged: the LLM only appends proposals;
+`promote.py` is the sole registry writer.

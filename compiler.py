@@ -63,7 +63,7 @@ except Exception:
 # Bump the version when the prompt changes meaningfully so older proposals
 # can be audited against the contract they were written under.
 # ----------------------------------------------------------------------------
-PROMPT_CONTRACT_VERSION = "1.3"   # 1.1: deterministic source de-noise + total
+PROMPT_CONTRACT_VERSION = "2.0"   # 1.1: deterministic source de-noise + total
                                   # budget + truncation/blob markers in <sources>.
                                   # 1.2: alias proposals carry a confidence field
                                   # (promote.py's `require_confidence: high` gate
@@ -71,6 +71,12 @@ PROMPT_CONTRACT_VERSION = "1.3"   # 1.1: deterministic source de-noise + total
                                   # 1.3: `type` proposal kind â€” the spec's
                                   # self-expansion path (always human-gated by
                                   # the registry's `new_type: auto: false`).
+                                  # 2.0: three NEW proposal kinds added to the
+                                  # <proposals> contract (learned detection +
+                                  # field extraction): biller, shape,
+                                  # field_mapping. The proposal-kind set
+                                  # changed meaningfully, so older proposals are
+                                  # now audited under the 1.x contract.
 
 # SYSTEM_PROMPT is intentionally a byte-stable module constant: Ollama/llama.cpp
 # amortize the KV cache for an identical leading `system` prompt across calls, so
@@ -106,7 +112,10 @@ OUTPUT FORMAT (exactly this shape, nothing else):
   {"kind": "alias",      "from": "...",     "to": "<existing-slug>", "evidence": "...", "confidence": 0.0},
   {"kind": "subtype",    "type": "<existing-type>", "name": "...",   "evidence": "..."},
   {"kind": "type",       "name": "...",     "evidence": "...", "confidence": 0.0},
-  {"kind": "reclassify", "to_type": "...",  "to_subtype": "...",     "evidence": "...", "confidence": 0.0}
+  {"kind": "reclassify", "to_type": "...",  "to_subtype": "...",     "evidence": "...", "confidence": 0.0},
+  {"kind": "biller",        "id": "<new-slug>", "matches": ["<surface form>"], "vendor_slug": "<existing-slug-or-omit>", "institution_slug": "<existing-slug-or-omit>", "account_slug": "<existing-slug-or-omit>", "default_tags": ["<existing-tag>"], "confidence": 0.0, "evidence": "...", "evidence_text": "<quoted snippet>"},
+  {"kind": "shape",         "id": "<new-slug>", "type": "<existing-type>", "subtype": "<existing-subtype>", "keywords": ["<co-occurring phrase>"], "min_matches": 2, "applies_to": ["pdf"], "confidence": 0.0, "evidence": "...", "evidence_text": "<quoted snippet>"},
+  {"kind": "field_mapping", "id": "<new-slug>", "applies_to": ["pdf", "email"], "pattern": "Label:\\s*(\\S+)", "field": "<field-name>", "group": 1, "parse": "text", "require_digit": false, "confidence": 0.0, "evidence": "...", "evidence_text": "<quoted snippet>"}
 ]
 </proposals>
 
@@ -116,6 +125,37 @@ A "type" proposal (a NEW top-level entity type) is a structural change and is
 always reviewed by a human â€” propose one ONLY when no existing type in
 <vocabulary> could reasonably hold this entity, and prefer a "subtype" or
 "reclassify" proposal whenever one fits.
+
+Three ADDITIONAL proposal kinds let you grow the detection vocabulary. Use
+them ONLY when you see something genuinely new in <sources> (never invent):
+
+  - biller: you saw a NEW vendor/biller surface form (a domain or brand)
+    that is NOT already in <vocabulary>. Propose the `matches` list (the exact
+    surface strings you saw, kept specific so short tokens do not false-fire),
+    a stable kebab-case `id`, and at most ONE of vendor_slug / institution_slug
+    / account_slug to link into the existing entity graph. `default_tags`, if
+    given, MUST already exist in <vocabulary>. Prefer the existing vocabulary;
+    only propose a new biller when no current biller covers what you saw.
+
+  - shape: you saw a NEW document structure characterized by CO-OCCURRING
+    keywords. Propose the `keywords` list, `min_matches` (how many must appear
+    to fire), and the existing `type` + `subtype` it implies (both MUST already
+    exist in <vocabulary>). Optionally restrict it to file kinds via
+    `applies_to` (e.g. ["jpeg", "png"]). A shape is vendor-agnostic.
+
+  - field_mapping: you saw a structured value (an id / date / amount /
+    number) with a label that is NOT already captured by the built-in
+    extractors. Propose a SIMPLE, BOUNDED regex with EXACTLY ONE capture group,
+    the `field` name to store it under, the capture `group` (default 1), and a
+    `parse` type ("text", "float", "int", or "iso-date"). Quote the
+    `evidence_text` snippet you matched against. The regex MUST be simple,
+    bounded, and single-group: no unbounded greedy `.*` across lines, no
+    alternations with multiple groups, no catastrophic backtracking. A field
+    mapping a human cannot eyeball as safe will be rejected, so keep it minimal.
+
+All three new kinds REQUIRE a quoted `evidence_text` snippet from <sources>
+(the exact substring that triggered the proposal) in addition to the
+paraphrased `evidence`. Every proposal still carries a `confidence` (0-1).
 """
 
 
@@ -364,6 +404,12 @@ def parse_response(text):
             try:
                 parsed = json.loads(body)
                 if isinstance(parsed, list):
+                    # No allowlist of `kind` values here: any dict carrying a
+                    # `kind` key is surfaced. The v2.0 contract adds
+                    # biller / shape / field_mapping kinds; they
+                    # flow through unchanged so the promotion step (promote.py)
+                    # can gate them. A malformed proposal dict (no `kind`) is
+                    # the only thing dropped here.
                     proposals = [p for p in parsed if isinstance(p, dict) and "kind" in p]
             except json.JSONDecodeError:
                 # Surface rather than silently drop â€” a model emitting malformed

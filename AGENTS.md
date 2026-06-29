@@ -34,7 +34,8 @@ This is what the guardian hook (`.claude/hooks/vault_guard.py`) enforces.
 |------|--------|------------------------|
 | `registry/schema.yaml` | `promote.py` / `review.py` ONLY | **BLOCKED** - grow via `/vault-add-entity-type` |
 | `registry/aliases.yaml` | `promote.py` ONLY | **BLOCKED** - grow via promote/review |
-| `registry/patterns.yaml` | human + promotion-append | allowed (classifier vocabulary) |
+| `registry/patterns.yaml` | human + promotion-append | allowed (classifier vocabulary — billers + shapes) |
+| `registry/field_mappings.yaml` | `promote.py` ONLY | **BLOCKED** - learned field mappings; grow via promote + human review approval path |
 | `registry/resolvers.yaml` | human only | allowed (credential backend config) |
 | `registry/_entity-template.md` | human | allowed (structural template) |
 | `raw/**` | append-only (sources) | adding new files OK; **never modify/delete** existing - WARNED |
@@ -47,12 +48,17 @@ This is what the guardian hook (`.claude/hooks/vault_guard.py`) enforces.
 ```
 raw/ (append-only)
   -> ingest.py .       classify deterministically -> entity stubs (facts, no prose)
+                        + extract fields via registry/field_mappings.yaml (additive)
   -> compiler.py .     THE LLM TOUCHPOINT: stub -> prose   (AGENT_VAULT_COMPILER=ollama|mock)
+                        PROMPT_CONTRACT_VERSION 2.0 (teaches new_biller/new_shape/new_field_mapping)
   -> promote.py .      learn vocabulary: proposals -> registry (deterministic commit)
+                        also graduates billers/shapes into patterns.yaml + field mappings into
+                        field_mappings.yaml (new_field_mapping: always human-gated + regex gate)
   -> review.py . ...   human approve/reject (gated types/proposals/entities)
+                        re-runs the field_mapping deterministic validation gate on approval
   build_index.py .     (re)build _index.json
   synapse.py <cmd>     query CLI: find|show|expiring|due|creds|resolve|list|compact
-  validate.py <vault>  schema gate (exit 0 = valid)
+  validate.py <vault>  schema gate (exit 0 = valid) — also validates patterns.yaml + field_mappings.yaml
   lint.py <vault>      operational audit (exit 1 if any findings)
 ```
 
@@ -96,8 +102,10 @@ Referenced, never stored: `scheme://store/path` URIs only (`credential_ref:`).
 
 ## Compiler contract
 
-`compiler.py` stamps proposals with `PROMPT_CONTRACT_VERSION` + model identity. Changing
-the prompt/proposal shape requires a version bump (see `/vault-extend-compiler`) so
+`compiler.py` stamps proposals with `PROMPT_CONTRACT_VERSION` + model identity. The contract
+is at **version 2.0** — it now teaches the LLM to emit three new proposal kinds:
+`new_biller`, `new_shape`, `new_field_mapping` (learned detection signals + field extraction).
+Changing the prompt/proposal shape requires a version bump (see `/vault-extend-compiler`) so
 changes are audited. `AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI).
 
 ## Integration boundary (do not cross)

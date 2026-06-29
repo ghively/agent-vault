@@ -49,6 +49,8 @@ wiki/
 | `raw/**` | Ingestion (append-only) | LLM (compile), Python |
 | `registry/schema.yaml` | **Promotion step only** | everyone |
 | `registry/aliases.yaml` | **Promotion step only** | everyone |
+| `registry/patterns.yaml` | **Human + promotion step** | everyone |
+| `registry/field_mappings.yaml` | **Promotion step only** | everyone |
 | `registry/resolvers.yaml` | Human | Agent Vault (resolve) |
 | `entities/*` frontmatter | Python (ingest) | everyone |
 | `entities/*` link block | Python (regenerated each run) | everyone |
@@ -176,19 +178,22 @@ While compiling a page the LLM sees content with real intelligence — and so it
 {"kind":"reclassify","entity":"document/bofa-resume-2026","from":"document/resume","to":"job-application/submitted","reason":"...","confidence":"medium","proposed_at":"..."}
 ```
 
-Proposal kinds: `new_type`, `new_subtype`, `new_tag`, `new_alias`, `reclassify`. Every proposal carries **evidence** (source files) and a **confidence**. No proposal ever mutates live state.
+Proposal kinds: `new_type`, `new_subtype`, `new_tag`, `new_alias`, `reclassify`, `new_biller`, `new_shape`, `new_field_mapping`. Every proposal carries **evidence** (source files) and a **confidence**. No proposal ever mutates live state.
 
 ### 5.2 Promotion (Python, deterministic, runs before each ingest)
 
 Python drains `proposals.jsonl` and applies promotion rules. This is the valve. Defaults:
 
 | Proposal kind | Auto-promote rule | Otherwise |
-|---------------|-------------------|-----------|
+|---------------|-------------------|----------|
 | `new_tag` | seen ≥ **3** times across proposals → add to `schema.yaml` | park in review queue |
 | `new_alias` | confidence `high` AND target slug exists → add to `aliases.yaml` | park |
 | `new_subtype` | parent type exists AND seen ≥ **2** → add | park |
 | `new_type` | **never auto** — always human-gated | always park for approval |
 | `reclassify` | confidence `high` AND target type already in registry → apply | park |
+| `new_biller` | seen ≥ **2** times across proposals AND target entity (vendor/institution slug) exists → append to `patterns.yaml` `billers:` block | park |
+| `new_shape` | seen ≥ **2** times AND parent type+subtype already exist in schema → append to `patterns.yaml` `shapes:` block | park |
+| `new_field_mapping` | **never auto** — always human-gated, PLUS a deterministic regex validation gate (see §5.4) | always park for approval; validation failures are queued with a precise reason |
 
 - **Normalization happens here, not in the LLM.** If the LLM proposed tag `bofa` and tag `bank-of-america` already maps the same entity, the promotion step collapses them via the alias map. The deterministic layer is the only thing that decides canonical form, so `bofa`/`BoA`/`bank-of-america` can never splinter into three live tags.
 - Promoted items are stamped with date + count in `schema.yaml`. Parked items wait in a review queue Python writes for the human.
@@ -207,6 +212,28 @@ Next Python ingest is now smarter — builds the new entity pages, wires the new
 ```
 
 Your resume example, end to end: ingest files the resume as a generic `document`. Compile reads it, recognizes a BofA-targeted job application, appends a `new_type: job-application` proposal + `reclassify` proposal with evidence. Promotion parks `job-application` for your approval (it's a new *type*, human-gated). You approve. Next ingest creates `entities/job-application/bofa-devops-role.md`, links it to `bank-of-america`, your resume, and you. Self-expansion — gated so it can't eat itself.
+
+### 5.4 Learned detection signals & field mappings
+
+The learning loop now operates at **three levels**, all flowing through the SAME propose → deterministic-validate → promote gate:
+
+1. **Taxonomy** (Stage 4): new types, subtypes, tags, and aliases — the vocabulary in `schema.yaml` / `aliases.yaml`. The original loop described above.
+2. **Detection** (new in this feature): new **billers** and **shapes** that the deterministic classifier uses. These graduate into the `billers:` and `shapes:` blocks of `registry/patterns.yaml`. `new_biller` and `new_shape` are auto-promote eligible (seen ≥ 2 times, with the target entity or parent type/subtype already in the registry). Hand-written `patterns.yaml` entries remain the **trusted base**; promote-appended entries are evidence-backed and audited — same anti-rot rule.
+3. **Field extraction** (new in this feature): new **field mappings** — learned regexes that extract structured facts (an amount, a date, an account number) from document text at ingest time. These graduate into `registry/field_mappings.yaml`, a promote-only file (like `schema.yaml`/`aliases.yaml`). Learned field extraction is **strictly additive** to built-in extractors and is **secret-scanned** at ingest so a regex that captures a credential is never silently persisted.
+
+**Why field mappings are human-gated (`auto: false`).** A promoted field-mapping regex runs against EVERY future ingest. A bad regex — catastrophic backtracking (ReDoS), a capture group that never fires, a pattern that silently matches the wrong field, or one that captures a secret — corrupts intake across many documents before anyone notices. That blast radius is too high for auto-promotion. So every `new_field_mapping` proposal MUST pass a **deterministic validation gate** (run by `promote.py` before queuing, and **re-run by `review.py` at approval time** — a human click can never bypass it):
+
+- **Compiles** — the regex must be valid Python `re`.
+- **Bounded** — ≤ 200 chars, ≤ 2 capture groups.
+- **ReDoS-safe** — no nested quantifier (an AST walk rejects the classic `(x+)+` super-linear shape).
+- **Matches evidence** — the regex must match the proposal's cited `evidence_text` and yield a **non-empty** capture at the named `group`.
+- **Parses** — the captured value must parse per the declared `parse` type (`text`, `int`, `float`, `iso-date`).
+- **Not secret-shaped** — the captured value must not look like a plaintext secret (the `secret_scan` module, spec §7).
+- **Valid slugs** — `id` and `field` must be valid slugs.
+
+If a field mapping fails validation at review time, it is **rejected with the precise reason**. The deterministic code is the sole gatekeeper; the human only decides which *passing* mappings are worth promoting.
+
+**The core invariant is unchanged.** The LLM still touches the system in exactly one place (`compiler.py`) and only ever **appends** proposals to `proposals.jsonl`. Deterministic Python (`promote.py`) is still the **sole writer** of all registry files (`schema.yaml`, `aliases.yaml`, `patterns.yaml`, `field_mappings.yaml`). The new feature extends this loop; it does not create a new one.
 
 ---
 

@@ -1,0 +1,6 @@
+version: 1
+# promote.py-ONLY writer. Do NOT hand-edit. (Like schema.yaml/aliases.yaml.)
+# Field mappings are learned from discovery proposals and vetted by the
+# deterministic validation gate in promote.py (§5) before they ever run
+# against an ingest. A human approves each one (new_field_mapping: auto: false).
+mappings: []

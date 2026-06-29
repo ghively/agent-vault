@@ -17,6 +17,8 @@ write the vocabulary it later reads (spec §3, §5).
 What this script writes:
   - `registry/schema.yaml` (new tags, new subtypes only; types are human-gated)
   - `registry/aliases.yaml` (new surface-form -> slug mappings)
+  - `registry/patterns.yaml` (billers: block + shapes: block — graduated biller/shape discoveries)
+  - `registry/field_mappings.yaml` (learned field-extraction regex mappings)
   - `discovery/promoted.jsonl` (append-only audit log of every action)
 
 What it must NEVER write:
@@ -51,6 +53,28 @@ except Exception:
 
 # Confidence bands referenced from schema.yaml's `require_confidence: high|med|low`.
 CONFIDENCE_BANDS = {"high": 0.80, "medium": 0.50, "low": 0.0}
+
+# Lazy singleton for the optional secret_scan module (spec §7). Mirrors
+# validate.py: lets promote gate field_mapping captures on the write-side
+# secret guard without a hard import dependency when the module is absent.
+_secret_scan = None
+_secret_scan_tried = False
+
+
+def _load_secret_scan(vault):
+    """Return the vault's secret_scan module, or None if unavailable. Imported
+    once and cached. Used by the field_mapping validation gate to reject any
+    proposed regex whose captured value is secret-shaped (spec §5/§7)."""
+    global _secret_scan, _secret_scan_tried
+    if not _secret_scan_tried:
+        _secret_scan_tried = True
+        try:
+            sys.path.insert(0, os.path.abspath(vault))
+            import secret_scan as _m  # type: ignore[import-not-found]
+            _secret_scan = _m
+        except Exception:
+            _secret_scan = None
+    return _secret_scan
 
 
 # ============================================================================
@@ -135,6 +159,37 @@ def norm_alias_key(s):
     return SPACE_RE.sub(" ", str(s or "").strip().lower())
 
 
+# Valid slug for biller/shape/field_mapping ids and field names.
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# Frontmatter field names are conservative: lowercase alnum + underscore.
+_FIELD_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,30}$")
+
+
+def _norm_slug(s):
+    """Best-effort slug normalization for proposal ids: lowercase, collapse
+    internal whitespace to single dashes. Does NOT validate — decide()'s gates
+    reject anything that still fails _SLUG_RE so a malformed id never lands in
+    the registry. Returns '' for falsy input (the gate will queue it)."""
+    if s is None:
+        return ""
+    return SPACE_RE.sub("-", str(s).strip().lower()).strip("-")
+
+
+def _clamp_confidence(c):
+    """Coerce a proposal confidence to a float in [0, 1]. Non-numeric or
+    missing values are returned as-is (aggregate() ignores non-floats), so a
+    junk confidence can never inflate an auto-promote decision."""
+    try:
+        f = float(c)
+    except (TypeError, ValueError):
+        return c
+    if f < 0.0:
+        return 0.0
+    if f > 1.0:
+        return 1.0
+    return f
+
+
 def normalize_proposal(record, aliases_map):
     """Return a normalized copy of one proposal record. Surface-form fields
     pass through the alias map so 'BoA' and 'bofa' collapse to the same slug
@@ -162,6 +217,18 @@ def normalize_proposal(record, aliases_map):
     elif kind == "reclassify":
         p["to_type"] = str(p.get("to_type") or "").strip().lower()
         p["to_subtype"] = str(p.get("to_subtype") or "").strip().lower()
+    elif kind == "biller":
+        p["id"] = _norm_slug(p.get("id"))
+        p["confidence"] = _clamp_confidence(p.get("confidence"))
+    elif kind == "shape":
+        p["id"] = _norm_slug(p.get("id"))
+        p["type"] = str(p.get("type") or "").strip().lower()
+        p["subtype"] = str(p.get("subtype") or "").strip().lower()
+        p["confidence"] = _clamp_confidence(p.get("confidence"))
+    elif kind == "field_mapping":
+        p["id"] = _norm_slug(p.get("id"))
+        p["field"] = str(p.get("field") or "").strip().lower()
+        p["confidence"] = _clamp_confidence(p.get("confidence"))
     return {**record, "proposal": p, "_kind": kind}
 
 
@@ -178,6 +245,9 @@ def proposal_identity(p):
     if k == "reclassify":
         return ("reclassify", p.get("from_entity", ""),
                 p.get("to_type", ""), p.get("to_subtype", ""))
+    if k == "biller":        return ("biller", p.get("id", ""))
+    if k == "shape":         return ("shape", p.get("id", ""))
+    if k == "field_mapping": return ("field_mapping", p.get("id", ""))
     return ("unknown", json.dumps(p, sort_keys=True))
 
 
@@ -221,6 +291,176 @@ def aggregate(records):
 
 
 # ============================================================================
+# Field-mapping validation gate — the safety valve for learned regex
+# ============================================================================
+# A promoted field mapping runs against EVERY future ingest, so a bad regex
+# (catastrophic backoff, a secret-capturing pattern, a capture that never
+# fires) silently corrupts intake. decide() runs _validate_field_mapping()
+# BEFORE any promotion and queues the proposal for human review on the first
+# failure. When in doubt, REJECT — a deterministic rejection never corrupts.
+_MAX_PATTERN_LEN = 200
+_MAX_GROUPS = 2
+_VALID_PARSE = ("text", "float", "int", "iso-date")
+# Common date layouts the iso-date parser will accept. A value matching none
+# of these is rejected (the proposal's parse promise can't be honored).
+_DATE_FORMATS = (
+    "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y",
+    "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+    "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y",
+)
+
+
+def _regex_ast(pattern):
+    """Parse a regex into the stdlib regex AST (SubPattern) or None if the
+    parser is unavailable. Prefers re._parser (3.11+) and falls back to the
+    deprecated sre_parse. Returning None is treated as a conservative reject."""
+    try:
+        try:
+            from re import _parser as _rp  # type: ignore[attr-defined]
+        except ImportError:  # pragma: no cover - older interpreters
+            import sre_parse as _rp  # type: ignore[import-not-found,deprecated]
+        return _rp.parse(pattern)
+    except Exception:
+        return None
+
+
+def _ast_has_nested_quantifier(node, inside_repeat=False):
+    """Walk the regex AST; return True if a quantified group contains another
+    quantifier — the classic super-linear ReDoS shape (e.g. `(x+)+`, `(a*)*`).
+
+    Conservative: any MAX_REPEAT/MIN_REPEAT encountered while already inside a
+    repeat is flagged. Plain `x+` (a single repeat over literals) is fine; a
+    repeat wrapping another repeat is not."""
+    data = getattr(node, "data", None) or []
+    for op, args in data:
+        opname = getattr(op, "name", str(op))
+        if opname in ("MAX_REPEAT", "MIN_REPEAT"):
+            if inside_repeat:
+                return True
+            child = args[2] if isinstance(args, tuple) and len(args) >= 3 else None
+            if child is not None and _ast_has_nested_quantifier(child, inside_repeat=True):
+                return True
+        elif opname == "SUBPATTERN":
+            child = args[-1] if isinstance(args, tuple) and args else None
+            if child is not None and _ast_has_nested_quantifier(child, inside_repeat):
+                return True
+        elif opname == "BRANCH":
+            branches = args[1] if isinstance(args, tuple) and len(args) >= 2 else []
+            for b in (branches or []):
+                if _ast_has_nested_quantifier(b, inside_repeat):
+                    return True
+        # LITERAL / IN / ASSERT / AT / ANY / GROUPREF etc. carry no nested
+        # quantifier risk and need no recursion.
+    return False
+
+
+def _try_parse_date(value):
+    for fmt in _DATE_FORMATS:
+        try:
+            datetime.datetime.strptime(value, fmt)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _validate_field_mapping(p, registry_state):
+    """Run ALL deterministic checks on a proposed field_mapping. Returns
+    (ok, reason). reason is human-readable; the first failing check short-
+    circuits. Mirrors the gate checklist in the spec (§5): compiles, bounded,
+    ReDoS-safe, matches its evidence, parses per `parse`, not secret-shaped,
+    and has a valid id/field."""
+    fid = str(p.get("id", ""))
+    if not _SLUG_RE.match(fid):
+        return False, f"id {fid!r} is not a valid slug"
+    field = str(p.get("field", ""))
+    if not _FIELD_RE.match(field):
+        return False, (f"field {field!r} must match ^[a-z0-9][a-z0-9_]{{0,30}}$")
+
+    pattern = str(p.get("pattern", ""))
+    if not pattern:
+        return False, "pattern is empty"
+    if len(pattern) > _MAX_PATTERN_LEN:
+        return False, f"pattern length {len(pattern)} > {_MAX_PATTERN_LEN}"
+
+    parse = str(p.get("parse", "text"))
+    if parse not in _VALID_PARSE:
+        return False, f"parse {parse!r} not in {_VALID_PARSE}"
+
+    try:
+        group = int(p.get("group", 1))
+    except (TypeError, ValueError):
+        return False, f"group {p.get('group')!r} is not an int"
+
+    # (a) must compile
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        return False, f"regex does not compile: {e}"
+
+    # (b) bounded capture-group count
+    if compiled.groups > _MAX_GROUPS:
+        return False, f"pattern has {compiled.groups} capture groups > {_MAX_GROUPS}"
+    if group < 1 or group > max(compiled.groups, 1):
+        return False, f"capture group {group} out of range (pattern has {compiled.groups})"
+
+    # (c) ReDoS guard — conservative AST walk
+    ast = _regex_ast(pattern)
+    if ast is None:
+        return False, "regex AST parse unavailable (conservative reject)"
+    if _ast_has_nested_quantifier(ast):
+        return False, "pattern contains a nested quantifier (ReDoS risk)"
+
+    # (d) must match the cited evidence and yield a non-empty capture at `group`
+    evidence_text = str(p.get("evidence_text", ""))
+    m = compiled.search(evidence_text)
+    if not m:
+        return False, "pattern does not match the cited evidence_text"
+    try:
+        captured = m.group(group)
+    except IndexError:
+        return False, f"capture group {group} could not be extracted"
+    if captured is None or str(captured).strip() == "":
+        return False, f"capture group {group} is empty in evidence_text"
+    value = str(captured).strip()
+
+    # require_digit optional guard
+    if p.get("require_digit") and not any(ch.isdigit() for ch in value):
+        return False, "require_digit set but captured value has no digit"
+
+    # (e) captured value must parse per `parse`
+    if parse == "int":
+        try:
+            int(value)
+        except ValueError:
+            return False, f"captured value {value!r} is not an int"
+    elif parse == "float":
+        try:
+            float(value)
+        except ValueError:
+            return False, f"captured value {value!r} is not a float"
+    elif parse == "iso-date":
+        if not _try_parse_date(value):
+            return False, f"captured value {value!r} is not a recognized date"
+    else:  # text
+        if not value:
+            return False, "captured text value is empty"
+
+    # (f) captured value must NOT be secret-shaped (spec §7 write-side guard)
+    scanner = registry_state.get("_secret_scan") if isinstance(registry_state, dict) else None
+    if scanner is not None:
+        try:
+            findings = scanner.scan(value)
+        except Exception:
+            findings = []
+        if findings:
+            return False, (f"captured value is secret-shaped "
+                          f"({findings[0].get('kind', 'unknown')})")
+
+    return True, "ok"
+
+
+# ============================================================================
 # Decision logic — apply the thresholds in schema.yaml's `promotion:` block
 # ============================================================================
 def decide(agg_item, thresholds, schema, registry_state):
@@ -257,6 +497,26 @@ def decide(agg_item, thresholds, schema, registry_state):
     elif k == "type":
         if p["name"] in registry_state["types"]:
             return _decision("rejected_duplicate", f"type '{p['name']}' already in registry")
+    elif k == "biller":
+        if p.get("id") in registry_state.get("biller_ids", ()):
+            return _decision("rejected_duplicate", f"biller '{p.get('id')}' already in patterns.yaml")
+    elif k == "shape":
+        if p.get("id") in registry_state.get("shape_ids", ()):
+            return _decision("rejected_duplicate", f"shape '{p.get('id')}' already in patterns.yaml")
+    elif k == "field_mapping":
+        if p.get("id") in registry_state.get("field_mapping_ids", ()):
+            return _decision("rejected_duplicate",
+                             f"field_mapping '{p.get('id')}' already in field_mappings.yaml")
+
+    # --- field_mapping deterministic validation gate (safety valve, §5) ---
+    # Runs BEFORE the auto:false check so a bad regex is queued with a precise
+    # reason instead of the generic human-gated message. field_mapping is
+    # auto:false regardless, so this never causes an auto-promote; it only
+    # upgrades the queue reason from "human-gated" to a specific rejection.
+    if k == "field_mapping":
+        ok, reason = _validate_field_mapping(p, registry_state)
+        if not ok:
+            return _decision("queue_for_review", f"field_mapping rejected: {reason}")
 
     # --- auto: false means ALWAYS gated (new_type) ---
     if not rule.get("auto", False):
@@ -302,6 +562,29 @@ def decide(agg_item, thresholds, schema, registry_state):
         if p["type"] not in registry_state["types"]:
             return _decision("queue_for_review",
                              f"parent type '{p['type']}' is not in the registry")
+
+    # new_biller: the proposed vendor/institution slug must already be an
+    # entity in the vault (or be auto-stubbable — a bare biller with no link
+    # slug is allowed). A dangling biller misroutes every future match.
+    if k == "biller" and rule.get("require_target_exists"):
+        target = p.get("vendor_slug") or p.get("institution_slug")
+        if target:
+            slugs = registry_state.get("entity_slugs", ())
+            if not any(s == target or s.endswith("/" + target) for s in slugs):
+                return _decision("queue_for_review",
+                                 f"biller target '{target}' is not an existing entity")
+
+    # new_shape: type+subtype MUST already be in schema — a shape pointing at a
+    # non-existent type/subtype corrupts the classifier for every ingest.
+    if k == "shape" and rule.get("require_parent_exists"):
+        stype = p.get("type")
+        ssub = p.get("subtype")
+        if stype not in registry_state["types"]:
+            return _decision("queue_for_review",
+                             f"shape parent type '{stype}' is not in the registry")
+        if ssub and ssub not in registry_state["subtypes_by_type"].get(stype, []):
+            return _decision("queue_for_review",
+                             f"shape subtype '{stype}/{ssub}' is not in the registry")
 
     if k == "reclassify" and rule.get("require_target_in_registry"):
         t, st = p.get("to_type"), p.get("to_subtype")
@@ -443,6 +726,144 @@ def apply_type(vault, name, today, dry_run=False):
     return True
 
 
+def _float_or(default, *vals):
+    """First numeric value in vals as a float, else `default`. Used to emit a
+    sane confidence for promoted biller/shape entries when the proposal omitted
+    one."""
+    for v in vals:
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
+def apply_biller(vault, id, agg, today, dry_run=False):
+    """Append a graduated biller entry to the `billers:` block of
+    registry/patterns.yaml. Mirrors apply_tag/apply_subtype: comment-preserving
+    insert via _insert_in_block, idempotent (no-op if the exact block is
+    present), atomic via tmp+rename. Entry shape matches the existing billers."""
+    p = agg.get("proposal") if isinstance(agg, dict) else {}
+    path = os.path.join(vault, "registry", "patterns.yaml")
+    text = open(path, encoding="utf-8").read()
+    lines = [f"  - id: {id}"]
+    matches = p.get("matches") or []
+    if matches:
+        lines.append("    matches:")
+        for m in matches:
+            lines.append(f"      - {_yaml_quote_key(m)}")
+    for key in ("vendor_slug", "institution_slug", "account_slug"):
+        v = p.get(key)
+        if v:
+            lines.append(f"    {key}: {v}")
+    dt = p.get("default_tags")
+    if dt:
+        lines.append(f"    default_tags: [{', '.join(str(t) for t in dt)}]")
+    lines.append(f"    confidence: {_float_or(0.9, p.get('confidence'))}")
+    entry = "\n".join(lines)
+    new_text = _insert_in_block(text, "billers", entry)
+    if new_text == text:
+        return False
+    if not dry_run:
+        _atomic_write(path, new_text)
+    return True
+
+
+def apply_shape(vault, id, agg, today, dry_run=False):
+    """Append a graduated shape entry to the `shapes:` block of
+    registry/patterns.yaml. Atomic + idempotent, same pattern as apply_biller."""
+    p = agg.get("proposal") if isinstance(agg, dict) else {}
+    path = os.path.join(vault, "registry", "patterns.yaml")
+    text = open(path, encoding="utf-8").read()
+    lines = [
+        f"  - id: {id}",
+        f"    type: {p.get('type', '')}",
+        f"    subtype: {p.get('subtype', '')}",
+    ]
+    keywords = p.get("keywords") or []
+    if keywords:
+        lines.append("    keywords:")
+        for kw in keywords:
+            lines.append(f"      - {_yaml_quote_key(kw)}")
+    min_matches = p.get("min_matches")
+    try:
+        lines.append(f"    min_matches: {int(min_matches)}")
+    except (TypeError, ValueError):
+        lines.append("    min_matches: 1")
+    applies_to = p.get("applies_to")
+    if applies_to:
+        lines.append(f"    applies_to: [{', '.join(str(a) for a in applies_to)}]")
+    lines.append(f"    confidence: {_float_or(0.85, p.get('confidence'))}")
+    entry = "\n".join(lines)
+    new_text = _insert_in_block(text, "shapes", entry)
+    if new_text == text:
+        return False
+    if not dry_run:
+        _atomic_write(path, new_text)
+    return True
+
+
+def apply_field_mapping(vault, id, agg, today, dry_run=False):
+    """Append a graduated field-mapping entry to registry/field_mappings.yaml.
+    This file is promote.py-ONLY and small, so we rewrite it in full (header +
+    all mappings) under the atomic tmp+rename writer — comments are preserved
+    because we own the canonical rendering. Idempotent: a no-op if `id` is
+    already present. Never auto-applied (new_field_mapping is auto:false); this
+    runs only from the human review/approve path."""
+    p = agg.get("proposal") if isinstance(agg, dict) else {}
+    path = os.path.join(vault, "registry", "field_mappings.yaml")
+    existing = load_yaml(path)
+    version = existing.get("version", 1) if isinstance(existing, dict) else 1
+    mappings = existing.get("mappings") if isinstance(existing, dict) else None
+    if mappings is None:
+        mappings = []
+    if any(isinstance(m, dict) and m.get("id") == id for m in mappings):
+        return False
+    try:
+        group = int(p.get("group", 1))
+    except (TypeError, ValueError):
+        group = 1
+    mappings.append({
+        "id": id,
+        "applies_to": list(p.get("applies_to") or []),
+        "pattern": str(p.get("pattern", "")),
+        "field": str(p.get("field", "")),
+        "group": group,
+        "parse": str(p.get("parse", "text")),
+        "require_digit": bool(p.get("require_digit", False)),
+        "promoted": today,
+        "count": int(agg.get("sightings", 1)) if isinstance(agg, dict) else 1,
+    })
+    if not dry_run:
+        _atomic_write(path, _render_field_mappings(version, mappings))
+    return True
+
+
+def _render_field_mappings(version, mappings):
+    """Deterministic YAML text for field_mappings.yaml. We render by hand
+    (not yaml.dump) to keep the stable, human-readable header + ordering the
+    promote.py-ONLY contract promises."""
+    out = [
+        "version: %d" % version,
+        "# promote.py-ONLY writer. Do NOT hand-edit. (Like schema.yaml/aliases.yaml.)",
+        "mappings:",
+    ]
+    for m in mappings:
+        out.append(f"  - id: {m.get('id', '')}")
+        applies_to = m.get("applies_to") or []
+        out.append(f"    applies_to: [{', '.join(str(a) for a in applies_to)}]")
+        out.append(f"    pattern: {_yaml_quote_key(m.get('pattern', ''))}")
+        out.append(f"    field: {m.get('field', '')}")
+        out.append(f"    group: {m.get('group', 1)}")
+        out.append(f"    parse: {m.get('parse', 'text')}")
+        out.append(f"    require_digit: {'true' if m.get('require_digit') else 'false'}")
+        out.append(f"    promoted: {m.get('promoted', '')}")
+        out.append(f"    count: {m.get('count', 1)}")
+    return "\n".join(out) + "\n"
+
+
 # ----------------------------------------------------------------------------
 # YAML text helpers — narrow, comment-preserving edits
 # ----------------------------------------------------------------------------
@@ -450,7 +871,7 @@ def _insert_in_block(text, block_key, new_line):
     """Insert `new_line` after the LAST indented entry of the `block_key:`
     mapping. The block ends at the first dedented top-level key (or EOF).
     Internal blank lines (used for visual grouping) are tolerated — we
-    anchor to the last indented line, not the first blank, so we don't
+       anchor to the last indented line, not the first blank, so we don't
     accidentally insert under a different key.
 
     Raises ValueError if `block_key:` is not present at top level. Silently
@@ -541,16 +962,29 @@ def log_action(vault, identity, kind, agg, decision, today_iso, dry_run=False):
 def registry_snapshot(vault):
     """Snapshot of registry state needed by decide(): tags, aliases, types,
     subtypes_by_type, plus the set of existing entity slugs for alias-target
-    existence checks."""
+    existence checks. Also loads patterns.yaml (biller/shape ids) and
+    field_mappings.yaml (mapping ids) for the idempotency checks of the three
+    learned-detection proposal kinds, and the secret_scan module for the
+    field_mapping validation gate."""
     schema = load_yaml(os.path.join(vault, "registry", "schema.yaml"))
     aliases = load_yaml(os.path.join(vault, "registry", "aliases.yaml"))
+    patterns = load_yaml(os.path.join(vault, "registry", "patterns.yaml"))
+    fm = load_yaml(os.path.join(vault, "registry", "field_mappings.yaml"))
     types = schema.get("types") or {}
+    billers = patterns.get("billers") or []
+    shapes = patterns.get("shapes") or []
+    mappings = (fm.get("mappings") or []) if isinstance(fm, dict) else []
     return {
         "tags": set((schema.get("tags") or {}).keys()),
         "aliases": set((aliases.get("aliases") or {}).keys()),
         "types": set(types.keys()),
         "subtypes_by_type": {t: list(types[t].get("subtypes") or []) for t in types},
         "entity_slugs": load_entity_slugs(vault),
+        "biller_ids": {b.get("id") for b in billers if isinstance(b, dict) and b.get("id")},
+        "shape_ids": {s.get("id") for s in shapes if isinstance(s, dict) and s.get("id")},
+        "field_mapping_ids": {m.get("id") for m in mappings
+                              if isinstance(m, dict) and m.get("id")},
+        "_secret_scan": _load_secret_scan(vault),
         "thresholds": schema.get("promotion") or {},
     }
 
@@ -630,6 +1064,18 @@ def _promote_unlocked(vault, dry_run):
                     applied = apply_subtype(vault, p["type"], p["name"], dry_run=dry_run)
                     if applied:
                         state["subtypes_by_type"].setdefault(p["type"], []).append(p["name"])
+                elif kind == "biller":
+                    applied = apply_biller(vault, p["id"], a, today, dry_run=dry_run)
+                    if applied:
+                        state.setdefault("biller_ids", set()).add(p["id"])
+                elif kind == "shape":
+                    applied = apply_shape(vault, p["id"], a, today, dry_run=dry_run)
+                    if applied:
+                        state.setdefault("shape_ids", set()).add(p["id"])
+                elif kind == "field_mapping":
+                    applied = apply_field_mapping(vault, p["id"], a, today, dry_run=dry_run)
+                    if applied:
+                        state.setdefault("field_mapping_ids", set()).add(p["id"])
             except ValueError as e:
                 # Registry-shape errors (missing block, schema drift). Queue
                 # this one for human review rather than crashing the whole

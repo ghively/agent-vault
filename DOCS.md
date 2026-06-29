@@ -197,13 +197,39 @@ triggers a fresh summary.
 | File | Author | Purpose |
 |------|--------|---------|
 | `schema.yaml` | promotion only | The 12 types, their subtypes, page templates, gating flags, promotion thresholds, and graduated tags. |
-| `patterns.yaml` | human + promotion | The classifier's vocabulary: known billers and document shapes. **Edit this directly** to teach it a new vendor. |
+| `patterns.yaml` | human + promotion | The classifier's vocabulary: known billers and document shapes. **Edit this directly** to teach it a new vendor. Promotion also appends graduated billers/shapes here (evidence-backed + audited). |
 | `aliases.yaml` | promotion only | Surface form â†’ slug (`"boa"` â†’ `bofa-checking`). |
+| `field_mappings.yaml` | promotion only | Learned field-extraction regexes (amounts, dates, IDs). **Promote-only writer** — each one is human-approved and passes a deterministic validation gate. |
 | `resolvers.yaml` | human | Credential backend config (scheme â†’ backend module). 9 backends implemented (see Â§2). |
 | `_entity-template.md` | human | The three-region page template, fully commented. |
 
 **The anti-rot rule:** the LLM *proposes* vocabulary additions; only the
 deterministic `promote.py` *commits* them. A non-deterministic component never
+writes the vocabulary it later reads. The vault now learns at **three levels**
+through this same gate: **taxonomy** (types/subtypes/tags/aliases → schema.yaml),
+**detection** (billers/shapes → patterns.yaml), and **field extraction** (regex
+mappings → field_mappings.yaml). All three flow through the propose →
+deterministic-validate → promote pipeline.
+
+#### Learned field-mapping safety
+
+A promoted field mapping runs against **every** future ingest, so a bad regex —
+catastrophic backtracking (ReDoS), a capture that never fires, or one that
+silently captures a secret — corrupts intake across many documents before anyone
+notices. That's why `new_field_mapping` is **always human-gated** (`auto: false`)
+and must pass a **deterministic validation gate** before promotion:
+
+- the regex **compiles** and is bounded (≤ 200 chars, ≤ 2 capture groups);
+- it is **ReDoS-safe** (no nested quantifier — an AST walk rejects `(x+)+`);
+- it **matches its cited evidence** and yields a non-empty capture at the named group;
+- the captured value **parses** per its declared type (`text`/`int`/`float`/`iso-date`);
+- the captured value is **not secret-shaped** (the `secret_scan` module);
+- `id` and `field` are valid slugs.
+
+`promote.py` runs this gate before queuing; `review.py` **re-runs it at approval
+time** — a human click can never bypass it. If a mapping fails, it is rejected
+with the precise reason. Field extraction is also **strictly additive** to
+built-in extractors and **secret-scanned** at ingest.
 writes the vocabulary it later reads.
 
 ### Rules that never bend (from the spec)
@@ -224,7 +250,7 @@ directory as the first argument (default: current directory).
 |--------|--------------|:----:|--------|
 | `ingest.py` | `raw/` â†’ entity stubs; hashes for idempotency; classifies; auto-stubs missing link targets | no | `entities/`, `raw/_manifest.jsonl`, `_index.json` |
 | `compiler.py` | Writes prose for stubs / drifted pages; logs proposals | **yes** | prose body, `status`+`compiled_from_hash`, `discovery/proposals.jsonl` |
-| `promote.py` | Drains proposals â†’ graduates vocabulary by threshold | no | `registry/schema.yaml`, `registry/aliases.yaml`, `discovery/promoted.jsonl` |
+| `promote.py` | Drains proposals → graduates vocabulary by threshold | no | `registry/schema.yaml`, `registry/aliases.yaml`, `registry/patterns.yaml` (billers/shapes), `registry/field_mappings.yaml`, `discovery/promoted.jsonl` |
 | `build_index.py` | Walks entities â†’ `_index.json` (+ human `_index.md`) | no | `_index.json`, `_index.md` |
 | `synapse.py` | Query CLI: `find`/`show`/`due`/`expiring`/`creds`/`resolve`/`list`/`compact` | no | nothing read-only (except `compact --apply`) |
 | `compact.py` | Bounds the append-only discovery logs without changing outcomes | no | rewrites `discovery/*.jsonl` (+ `.bak`) only with `--apply` |

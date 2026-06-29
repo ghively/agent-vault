@@ -390,6 +390,126 @@ def load_patterns(vault):
         return yaml.safe_load(f) or {}
 
 
+# --- learned field mappings (registry/field_mappings.yaml) -----------------
+#
+# SAFETY PROPERTY: built-in extractors (DUE_RE / AMOUNT_RE / ...) are trusted —
+# they are human-authored Python. Learned field mappings are LLM-proposed via
+# the compile pass and then HUMAN-GATED (promote.py) before landing in
+# registry/field_mappings.yaml, so they are trusted AT extraction time. But:
+#   1. They run through secret_scan exactly like the built-in field values do
+#      (build_stub.redact-on-write), AND extract_fields blocks any capture
+#      that is itself secret-shaped, so a learned mapping can NEVER write a
+#      secret-shaped value into a stub field.
+#   2. They are STRICTLY ADDITIVE — a learned mapping never overrides a field a
+#      built-in already set (built-ins take precedence).
+#   3. A single malformed promoted regex DEGRADES to "drop that one mapping" at
+#      load time — it never crashes ingest. A missing/malformed file degrades to
+#      built-ins only. A bad learned config must never abort intake.
+_FIELD_MAPPINGS_CACHE = {}   # keyed by vault path; per-run cache
+
+
+def load_field_mappings(vault):
+    """Read registry/field_mappings.yaml, compile each mapping's `pattern`
+    exactly ONCE (re.compile), and return a list of compiled-mapping dicts.
+
+    Returns [] when the file is absent OR malformed (a bad learned config must
+    DEGRADE to built-ins only, never abort intake). One bad promoted regex is
+    DROPPED individually with a stderr warn; the rest still load. Cached per-run
+    keyed by vault path so extract_fields reuses compiled objects across every
+    subject in the same ingest pass.
+
+    Each returned dict has: id, applies_to, cre (compiled regex), field, group,
+    parse, require_digit.
+    """
+    if vault in _FIELD_MAPPINGS_CACHE:
+        return _FIELD_MAPPINGS_CACHE[vault]
+    path = os.path.join(vault, "registry", "field_mappings.yaml")
+    compiled = []
+    if not os.path.exists(path):
+        _FIELD_MAPPINGS_CACHE[vault] = compiled
+        return compiled
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as e:
+        # A malformed learned config must never abort intake — degrade to
+        # built-ins only.
+        print(f"warn: registry/field_mappings.yaml is malformed ({e}); "
+              f"learned field extraction disabled for this run",
+              file=sys.stderr)
+        _FIELD_MAPPINGS_CACHE[vault] = compiled
+        return compiled
+    # Accept either a bare list or a dict with a top-level list under a key.
+    entries = []
+    if isinstance(raw, list):
+        entries = raw
+    elif isinstance(raw, dict):
+        for key in ("mappings", "field_mappings", "learned_mappings"):
+            if isinstance(raw.get(key), list):
+                entries = raw[key]
+                break
+    for m in entries:
+        if not isinstance(m, dict):
+            continue
+        pattern = m.get("pattern")
+        field = m.get("field")
+        if not pattern or not field:
+            print(f"warn: learned field mapping missing pattern/field "
+                  f"(id={m.get('id')!r}); dropped", file=sys.stderr)
+            continue
+        try:
+            cre = re.compile(pattern)
+        except re.error as e:
+            # One bad promoted regex must not poison all intake — drop just it.
+            print(f"warn: learned field mapping {m.get('id')!r} has bad regex "
+                  f"({e}); dropped (one bad promoted regex must not poison "
+                  f"intake)", file=sys.stderr)
+            continue
+        try:
+            group = int(m.get("group", 1))
+        except (TypeError, ValueError):
+            group = 1
+        parse_type = m.get("parse") or "text"
+        if parse_type not in ("text", "float", "int", "iso-date"):
+            parse_type = "text"
+        compiled.append({
+            "id": m.get("id"),
+            "applies_to": m.get("applies_to"),
+            "cre": cre,
+            "field": field,
+            "group": group,
+            "parse": parse_type,
+            "require_digit": bool(m.get("require_digit", False)),
+        })
+    _FIELD_MAPPINGS_CACHE[vault] = compiled
+    return compiled
+
+
+def _apply_learned_parse(raw, parse_type):
+    """Coerce a captured string into the mapping's declared type. Returns None
+    on a parse failure (the caller treats None as "no value").
+    - text: stripped string (default)
+    - float/int: best-effort numeric coercion (commas tolerated)
+    - iso-date: reuse _parse_any_date so learned date captures match built-ins
+    """
+    if not isinstance(raw, str):
+        raw = str(raw)
+    s = raw.strip()
+    if parse_type == "float":
+        try:
+            return float(s.replace(",", ""))
+        except ValueError:
+            return None
+    if parse_type == "int":
+        try:
+            return int(s.replace(",", "").split(".")[0])
+        except ValueError:
+            return None
+    if parse_type == "iso-date":
+        return _parse_any_date(s)
+    return s
+
+
 def sources_hash(paths):
     """Stable, short identifier for a set of source paths. Changes when the
     source set changes â€” that's the signal the compile pass uses to recompile.
@@ -541,9 +661,15 @@ def _parse_any_date(tok):
     return None
 
 
-def extract_fields(text, meta, kind):
+def extract_fields(text, meta, kind, learned_mappings=None):
     """Pull dates, amounts, ids out of extracted text into a small dict.
-    Always returns strings (JSON/YAML safe)."""
+    Always returns strings (JSON/YAML safe).
+
+    Learned field mappings (optional) run AFTER the built-in regexes and are
+    STRICTLY ADDITIVE: they never overwrite a field a built-in already set
+    (built-ins take precedence). Each learned capture is guarded with the SAME
+    secret_scan the built-in fields use, so a learned mapping can never write a
+    secret-shaped value into a stub field."""
     f = {}
     m = DUE_RE.search(text)
     if m and _parse_any_date(m.group(1)): f["due"] = _parse_any_date(m.group(1))
@@ -576,6 +702,43 @@ def extract_fields(text, meta, kind):
         dt = (meta.get("datetime_original") or meta.get("datetime") or "")
         m = re.match(r"(\d{4})[:\-/](\d{2})[:\-/](\d{2})", dt)
         if m: f["created"] = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+
+    # --- learned field mappings (run AFTER built-ins; strictly additive) ---
+    # See load_field_mappings for the full SAFETY PROPERTY. In short: built-in
+    # extractors are trusted human-authored Python; learned mappings are
+    # LLM-proposed + human-gated, trusted AT extraction time, but (1) guarded
+    # by secret_scan exactly like built-ins, (2) strictly additive, and (3) a
+    # single malformed promoted regex degrades to "drop that mapping" at load
+    # time, never crashing ingest.
+    if learned_mappings and text:
+        for lm in learned_mappings:
+            applies_to = lm.get("applies_to")
+            if applies_to and kind not in applies_to:
+                continue
+            field = lm["field"]
+            if field in f:
+                continue  # built-ins take precedence; learned is additive
+            mm = lm["cre"].search(text)
+            if not mm:
+                continue
+            try:
+                raw_cap = mm.group(lm["group"])
+            except IndexError:
+                continue  # group index out of range for this match
+            if raw_cap is None:
+                continue
+            val = _apply_learned_parse(raw_cap, lm["parse"])
+            if val is None:
+                continue
+            if lm["require_digit"] and not re.search(r"\d", str(val)):
+                continue
+            # Guard: a learned mapping must NEVER write a secret-shaped value
+            # into a stub field. Use the SAME secret_scan the built-ins use.
+            if secret_scan is not None and isinstance(val, str):
+                if secret_scan.scan(val):
+                    continue  # block — the captured value looks like a secret
+                val = secret_scan.redact(val)
+            f[field] = val
     return f
 
 
@@ -1205,6 +1368,7 @@ def enforce_human_gate(stub, gated_types):
 def _ingest_locked(vault):
     warn_missing_extractors()
     patterns = load_patterns(vault)
+    learned_field_mappings = load_field_mappings(vault)
     gated_types = load_gated_types(vault)
     manifest = load_manifest(vault)
     # .get(): a hand-edited or foreign manifest record without a hash must not
@@ -1241,7 +1405,8 @@ def _ingest_locked(vault):
         try:
             _ingest_one_file(vault, path, rel, h, kind_today=today,
                              patterns=patterns, summary=summary,
-                             gated_types=gated_types)
+                             gated_types=gated_types,
+                             learned_mappings=learned_field_mappings)
             seen_hashes.add(h)
         except Exception as e:
             # A poison file must not abort the whole run (and must not be
@@ -1261,7 +1426,7 @@ def _ingest_locked(vault):
 
 
 def _ingest_one_file(vault, path, rel, h, kind_today, patterns, summary,
-                     gated_types=frozenset()):
+                     gated_types=frozenset(), learned_mappings=None):
     """Process one raw file end to end (extract -> classify -> write stubs ->
     back-link -> manifest). Raises on any failure so the caller can isolate a
     poison file without aborting the run."""
@@ -1288,7 +1453,8 @@ def _ingest_one_file(vault, path, rel, h, kind_today, patterns, summary,
     stubs = []
     for sub in subjects:
         c = classify(sub["text"], sub["meta"], sub["kind"], sub["name"], patterns)
-        fields = extract_fields(sub["text"], sub["meta"], sub["kind"])
+        fields = extract_fields(sub["text"], sub["meta"], sub["kind"],
+                                learned_mappings=learned_mappings)
         stubs.append((sub, enforce_human_gate(build_stub(sub, c, fields),
                                               gated_types)))
 
@@ -1449,6 +1615,19 @@ def build_stub(subject, classification, fields):
     for k in ("order_id", "policy_id", "parcel_id", "period"):
         if fields.get(k):
             stub["notes"][k] = fields[k]
+    # Surface LEARNED field-mapping captures (registry/field_mappings.yaml) into
+    # the Python-owned notes. These have no schema frontmatter field, so they
+    # live in notes exactly like order_id/policy_id do. Only fields NOT already
+    # a built-in key reach here (extract_fields is strictly additive and never
+    # overrides a built-in). Notes are redacted via secret_scan.redact at write
+    # time (render_stub), and extract_fields already blocks secret-shaped
+    # captures, so a learned mapping can never leak a secret into a stub.
+    _BUILTIN_FIELD_KEYS = frozenset((
+        "due", "expires", "renews", "value", "vin", "serial", "model",
+        "last4", "order_id", "policy_id", "parcel_id", "period", "created"))
+    learned = {k: v for k, v in fields.items() if k not in _BUILTIN_FIELD_KEYS}
+    if learned:
+        stub["notes"]["learned_fields"] = learned
     if classification["type"] == "media" and (subject["meta"] or {}).get("gps"):
         stub["notes"]["gps"] = subject["meta"]["gps"]
     if secret_findings:

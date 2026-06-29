@@ -182,6 +182,31 @@ def cmd_approve(vault, sid, reason=""):
               f"(applied={n_applied})")
         return 0
 
+    # --- new_field_mapping: RE-RUN the deterministic validation gate ---
+    # A human click must NEVER bypass promote.py's regex safety checks.
+    # If the mapping fails validation at review time (e.g. the evidence
+    # drifted, the pattern was edited, a ReDoS shape crept in), reject it
+    # with the precise reason instead of applying. Uses the SAME helper
+    # promote.py uses so the logic is identical.
+    if kind == "field_mapping":
+        rs = promote.registry_snapshot(vault)
+        ok, vreason = promote._validate_field_mapping(p, rs)
+        if not ok:
+            _log_review(vault, ident, rec, "review_rejected",
+                        f"field_mapping failed validation: {vreason}")
+            print(f"rejected {sid}: field_mapping failed validation: {vreason}")
+            return 0
+        with vault_lock(vault):
+            applied = promote.apply_field_mapping(
+                vault, p["id"],
+                {"proposal": p, "sightings": rec.get("sightings", 0)},
+                today)
+            _log_review(vault, ident, rec, "review_approved",
+                        note if applied else f"{note} (already in registry)")
+        print(f"approved {sid}: field_mapping '{p.get('id')}'"
+              + ("" if applied else "  (registry already had it)"))
+        return 0
+
     with vault_lock(vault):
         if kind == "tag":
             applied = promote.apply_tag(vault, p["name"],
@@ -197,6 +222,18 @@ def cmd_approve(vault, sid, reason=""):
         elif kind == "type":
             applied = promote.apply_type(vault, p["name"], today)
             target = f"type '{p['name']}'"
+        elif kind == "biller":
+            applied = promote.apply_biller(
+                vault, p["id"],
+                {"proposal": p, "sightings": rec.get("sightings", 0)},
+                today)
+            target = f"biller '{p.get('id')}'"
+        elif kind == "shape":
+            applied = promote.apply_shape(
+                vault, p["id"],
+                {"proposal": p, "sightings": rec.get("sightings", 0)},
+                today)
+            target = f"shape '{p.get('id')}'"
         else:
             sys.exit(f"don't know how to apply kind {kind!r}")
         _log_review(vault, ident, rec, "review_approved",

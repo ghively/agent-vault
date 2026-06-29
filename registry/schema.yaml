@@ -136,3 +136,17 @@ promotion:
   new_subtype:  { auto: true,  min_sightings: 2, require_parent_exists: true }
   new_type:     { auto: false }                        # always human-gated
   reclassify:   { auto: true,  require_confidence: high, require_target_in_registry: true }
+  # Learned detection + field extraction (Stage 4). billers/shapes write into
+  # registry/patterns.yaml; field mappings write into registry/field_mappings.yaml.
+  # new_biller links a classifier signal into the entity graph — the referenced
+  # vendor/institution slug must already exist (or be auto-stubbable) so a
+  # dangling biller can never misroute every future match.
+  new_biller:   { auto: true,  min_sightings: 2, require_target_exists: true }
+  # new_shape points a structural pattern at a type+subtype that MUST already
+  # be in schema; a shape aimed at a non-existent type corrupts classification.
+  new_shape:    { auto: true,  min_sightings: 2, require_parent_exists: true }
+  # new_field_mapping is ALWAYS human-gated (auto: false) — a promoted regex
+  # runs against EVERY ingest, so a catastrophic-backoff or secret-capturing
+  # pattern silently corrupts intake. The deterministic validation gate in
+  # decide() still vets each one and queues bad ones with a precise reason.
+  new_field_mapping: { auto: false }
