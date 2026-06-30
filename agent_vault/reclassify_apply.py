@@ -26,7 +26,11 @@ Usage:
   python3 reclassify_apply.py [VAULT] --slug X     # apply only entity X
   python3 reclassify_apply.py [VAULT] --dry-run    # show plan, write nothing
 """
-import sys, os, re, json, datetime
+import sys
+import os
+import re
+import json
+import datetime
 
 try:
     import yaml
@@ -300,7 +304,7 @@ def apply_reclassify(vault, slug, to_type, to_subtype, identity,
                     "proposal": proposal,
                 })
             return {"slug": slug, "status": "abandoned",
-                    "reason": f"entity file gone; logged reclassify_abandoned"}
+                    "reason": "entity file gone; logged reclassify_abandoned"}
     else:
         try:
             old_type, old_path = find_entity_by_slug(vault, slug)

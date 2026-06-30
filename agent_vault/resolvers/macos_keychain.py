@@ -15,7 +15,8 @@ Ref → lookup mapping:
 i.e. `keychain://<service>[/<account>]`. Returns the password (`-w`). Auth is the
 logged-in user's unlocked keychain; this resolver just invokes the CLI. macOS only.
 """
-import shutil, subprocess
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 15

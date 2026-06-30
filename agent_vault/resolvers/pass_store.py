@@ -17,7 +17,9 @@ Ref → entry mapping:
 (subsequent lines are metadata), so we return the first line. Auth is handled by
 `pass`/gpg-agent — this resolver just invokes the already-unlocked CLI.
 """
-import shutil, subprocess, os
+import shutil
+import subprocess
+import os
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 30

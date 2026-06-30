@@ -29,7 +29,11 @@ What it must NEVER write:
 Usage:  python3 promote.py [VAULT_DIR]   (defaults to current dir)
         python3 promote.py . --dry-run   (show what would happen, write nothing)
 """
-import sys, os, re, json, datetime
+import sys
+import os
+import re
+import json
+import datetime
 
 # Force UTF-8 stdout/stderr so entity titles and LLM-proposed concepts with
 # Unicode don't crash on Windows consoles that default to cp1252.

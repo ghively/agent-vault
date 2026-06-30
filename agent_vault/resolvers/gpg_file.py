@@ -20,7 +20,9 @@ relies on gpg-agent (asymmetric keys). With `passphrase_env`, the named env var
 supplies a symmetric passphrase via loopback pinentry. The plaintext is returned
 to the caller and never written anywhere; store_dir containment is enforced.
 """
-import os, shutil, subprocess
+import os
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 30

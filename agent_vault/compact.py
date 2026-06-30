@@ -21,7 +21,10 @@ Usage:
     python3 compact.py [VAULT_DIR]            # report only (no writes)
     python3 compact.py [VAULT_DIR] --apply    # compact in place (+ .bak backups)
 """
-import sys, os, json, shutil
+import sys
+import os
+import json
+import shutil
 
 # Force UTF-8 stdout/stderr so em-dashes and other Unicode don't crash on
 # Windows consoles that default to cp1252.

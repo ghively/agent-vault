@@ -25,7 +25,9 @@ CONTRACT (spec Â§7, never bends):
 Adding a backend = drop one module in this package + add one stanza to
 resolvers.yaml. No schema change, no edit here.
 """
-import os, sys, importlib
+import os
+import sys
+import importlib
 from collections import namedtuple
 
 __all__ = ["Ref", "ResolverError", "parse_ref", "load_config", "resolve", "safe_stderr"]

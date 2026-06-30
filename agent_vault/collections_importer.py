@@ -25,7 +25,13 @@ Usage:
   python3 collections_importer.py [VAULT] --source raw/collections/steam.csv
   python3 collections_importer.py [VAULT] --source raw/collections/  # walk dir
 """
-import sys, os, re, csv, json, hashlib, datetime
+import sys
+import os
+import re
+import csv
+import json
+import hashlib
+import datetime
 
 # Force UTF-8 stdout/stderr so media titles with Unicode don't crash on
 # Windows consoles that default to cp1252.

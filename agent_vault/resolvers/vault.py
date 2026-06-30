@@ -20,7 +20,8 @@ configured/`password` default field name it is treated as the field; otherwise
 from the standard `VAULT_ADDR` / `VAULT_TOKEN` environment — this resolver just
 invokes the already-authenticated CLI.
 """
-import shutil, subprocess
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 30

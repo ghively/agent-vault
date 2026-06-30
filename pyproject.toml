@@ -10,9 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "SynapseNAS" }]
-# Runtime deps: the vault is nearly pure stdlib. If the import audit (Step 6)
-# finds `yaml` (PyYAML) is actually imported, add  `dependencies = ["pyyaml>=6.0"]`.
-dependencies = []
+# Runtime deps: the vault is nearly pure stdlib. PyYAML is required for YAML parsing.
+dependencies = ["pyyaml>=6.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
@@ -27,10 +26,62 @@ packages = ["agent_vault"]
 line-length = 100
 target-version = "py311"
 
+# Legacy scripts use compact one-liners; allow E701 (colon) and E702 (semicolon) there.
+[tool.ruff.lint.per-file-ignores]
+"agent_vault/build_index.py" = ["E701", "E702"]
+"agent_vault/collections_importer.py" = ["E701", "E702"]
+"agent_vault/compact.py" = ["E701", "E702"]
+"agent_vault/compiler.py" = ["E701", "E702"]
+"agent_vault/ingest.py" = ["E701", "E702"]
+"agent_vault/lint.py" = ["E701", "E702"]
+"agent_vault/promote.py" = ["E701", "E702"]
+"agent_vault/reclassify_apply.py" = ["E701", "E702"]
+"agent_vault/review.py" = ["E701", "E702"]
+"agent_vault/synapse.py" = ["E701", "E702"]
+"agent_vault/validate.py" = ["E701", "E702"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
 # Legacy scripts may need per-module easing (see Task 5); add overrides there.
+
+# Legacy scripts predate strict typing; ease them while keeping NEW code strict.
+# These are the original Agent Vault scripts written before mypy adoption.
+[[tool.mypy.overrides]]
+module = [
+  "agent_vault.build_index",
+  "agent_vault.collections_importer",
+  "agent_vault.compact",
+  "agent_vault.compiler",
+  "agent_vault.ingest",
+  "agent_vault.lint",
+  "agent_vault.locking",
+  "agent_vault.promote",
+  "agent_vault.reclassify_apply",
+  "agent_vault.review",
+  "agent_vault.secret_scan",
+  "agent_vault.synapse",
+  "agent_vault.validate",
+  "agent_vault.resolvers",
+  "agent_vault.resolvers.*",
+]
+strict = false
+disable_error_code = [
+  "no-untyped-def",
+  "attr-defined",
+  "no-untyped-call",
+  "import-untyped",
+  "import-not-found",
+  "var-annotated",
+  "union-attr",
+  "arg-type",
+  "assignment",
+  "misc",
+  "operator",
+  "no-redef",
+  "unused-ignore",
+  "type-var",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

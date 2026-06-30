@@ -21,7 +21,15 @@ A low-confidence classification still produces a findable stub, flagged
 Usage:
     python3 ingest.py [VAULT_DIR]
 """
-import sys, os, re, json, hashlib, datetime, email, email.policy, io
+import sys
+import os
+import re
+import json
+import hashlib
+import datetime
+import email
+import email.policy
+import io
 
 # Force UTF-8 stdout/stderr so entity slugs/titles with Unicode don't crash on
 # Windows consoles that default to cp1252.
@@ -254,7 +262,8 @@ _OOXML_A = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 
 def _docx_text_from_bytes(data):
-    import io, zipfile
+    import io
+    import zipfile
     from xml.etree import ElementTree as ET
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         if z.getinfo("word/document.xml").file_size > MAX_DECOMPRESSED_BYTES:
@@ -280,7 +289,8 @@ def extract_docx(path):
 
 
 def _xlsx_text_from_bytes(data):
-    import io, zipfile
+    import io
+    import zipfile
     from xml.etree import ElementTree as ET
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         names = set(z.namelist())

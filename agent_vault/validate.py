@@ -9,7 +9,10 @@ Usage:
     python3 validate.py [VAULT_DIR]      # defaults to current dir
 Exit code 0 = all valid, 1 = problems found.
 """
-import sys, os, re, glob
+import sys
+import os
+import re
+import glob
 
 # Force UTF-8 stdout/stderr so entity titles with Unicode don't crash on
 # Windows consoles that default to cp1252.
@@ -77,7 +80,7 @@ def validate_file(path, schema, vault):
     raw = open(path, encoding="utf-8").read()
     m = FM_RE.match(raw)
     if not m:
-        return [f"no parseable frontmatter block"], []
+        return ["no parseable frontmatter block"], []
     body = m.group(2)
     try:
         fm = yaml.safe_load(m.group(1)) or {}

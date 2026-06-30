@@ -18,7 +18,8 @@ i.e. `secret-tool://<service>[/<account>]`. The attribute names default to
 `service`/`account` and are overridable in config. Auth is the desktop session's
 unlocked keyring; this resolver just invokes the CLI.
 """
-import shutil, subprocess
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 15

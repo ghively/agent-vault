@@ -40,7 +40,12 @@ Ownership stays intact: a human DECIDES here; deterministic code writes.
 Usage:
   python3 review.py [VAULT] <command> [args]
 """
-import sys, os, re, json, hashlib, datetime
+import sys
+import os
+import re
+import json
+import hashlib
+import datetime
 
 # Force UTF-8 stdout/stderr so entity titles with Unicode don't crash on
 # Windows consoles that default to cp1252.
@@ -241,8 +246,8 @@ def cmd_approve(vault, sid, reason=""):
     print(f"approved {sid}: {target}"
           + ("" if applied else "  (registry already had it)"))
     if kind == "type":
-        print(f"  -> refine the new type's description/subtypes in "
-              f"registry/schema.yaml (seeded with subtypes: [general])")
+        print("  -> refine the new type's description/subtypes in "
+              "registry/schema.yaml (seeded with subtypes: [general])")
     return 0
 
 

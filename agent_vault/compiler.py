@@ -36,7 +36,13 @@ Trying a new model is a config change, not a code change:
   $ OLLAMA_MODEL=llama3.1:8b python3 compiler.py .
   $ python3 compiler.py --model phi4 .
 """
-import sys, os, re, json, datetime, urllib.request, urllib.error
+import sys
+import os
+import re
+import json
+import datetime
+import urllib.request
+import urllib.error
 
 # Force UTF-8 stdout/stderr so entity titles and LLM-proposed content with
 # Unicode don't crash on Windows consoles that default to cp1252.

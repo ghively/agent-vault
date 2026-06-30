@@ -22,7 +22,8 @@ i.e. join store + path segments with '_', uppercase, and replace any character
 that isn't a letter or digit with '_'. With `prefix: GREGORY_`, the first
 example resolves GREGORY_APP_BOFA_TOKEN instead.
 """
-import os, re
+import os
+import re
 from . import ResolverError
 
 

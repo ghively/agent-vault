@@ -21,7 +21,11 @@ resolvers/ package). The plaintext is printed once and never stored in the vault
 
 Usage:  synapse <command> [args]   (run from vault dir, or set AGENT_VAULT_PATH)
 """
-import sys, os, re, json, datetime
+import sys
+import os
+import re
+import json
+import datetime
 
 # Force UTF-8 stdout/stderr so entity titles with Unicode don't crash on
 # Windows consoles that default to cp1252.
@@ -174,7 +178,7 @@ def cmd_creds(args, ents, aliases):
     print(f"{e['title']}")
     print(f"  reference : {ref}")
     print(f"  backend   : {scheme}  (resolve via registry/resolvers.yaml)")
-    print(f"  note      : this is the REFERENCE only; the secret is never stored in the vault")
+    print("  note      : this is the REFERENCE only; the secret is never stored in the vault")
     print(f"  resolve   : run `synapse resolve {e['slug']}` to fetch the actual secret")
 
 

@@ -19,7 +19,8 @@ Two consumers, two strictness tiers:
 CONTRACT: this module NEVER stores, returns, or logs the matched secret itself.
 Findings carry a category and a short non-reversible fingerprint only.
 """
-import re, hashlib
+import re
+import hashlib
 
 __all__ = ["scan", "looks_like_secret", "redact", "Finding"]
 

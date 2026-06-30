@@ -22,7 +22,11 @@ Usage:
     python3 lint.py [VAULT] --report PATH  # also write JSON to PATH
     python3 lint.py [VAULT] --aging-days 30  # override default 14-day aging
 """
-import sys, os, re, json, datetime
+import sys
+import os
+import re
+import json
+import datetime
 
 # Force UTF-8 stdout/stderr so Unicode chars (→, —, box-drawing) don't crash
 # on Windows consoles that default to cp1252.

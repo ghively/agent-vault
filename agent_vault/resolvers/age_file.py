@@ -19,7 +19,9 @@ dependency, matching the lowest-dependency / harness-independent ethos. The
 private key never leaves the keyfile; the plaintext is returned to the caller
 and never written anywhere.
 """
-import os, shutil, subprocess
+import os
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 DECRYPT_TIMEOUT_S = 30

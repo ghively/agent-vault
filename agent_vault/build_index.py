@@ -8,7 +8,12 @@ so retrieval is "filter the index", never "reason over text".
 
 Usage:  python3 build_index.py [VAULT_DIR]   # defaults to current dir
 """
-import sys, os, re, glob, json, datetime
+import sys
+import os
+import re
+import glob
+import json
+import datetime
 
 # Force UTF-8 stdout/stderr so entity titles with Unicode don't crash on
 # Windows consoles that default to cp1252.

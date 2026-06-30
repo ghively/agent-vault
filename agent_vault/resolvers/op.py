@@ -22,7 +22,8 @@ AUTHENTICATION is the operator's responsibility and is intentionally NOT handled
 here: run `op signin` first, or set OP_SERVICE_ACCOUNT_TOKEN in the environment.
 This resolver simply invokes the already-authenticated CLI.
 """
-import shutil, subprocess
+import shutil
+import subprocess
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 30

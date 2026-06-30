@@ -33,7 +33,10 @@ supported: it would put an unlock secret in plaintext inside the vault tree,
 and passing it as `--session` on argv would expose it in /proc/<pid>/cmdline —
 the same exposure the gpg backend avoids by using a passphrase fd.
 """
-import os, shutil, subprocess, json
+import os
+import shutil
+import subprocess
+import json
 from . import ResolverError, safe_stderr
 
 TIMEOUT_S = 30

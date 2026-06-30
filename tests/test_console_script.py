@@ -2,7 +2,7 @@
 from importlib.metadata import entry_points
 
 
-def test_console_script_registered():
+def test_console_script_registered() -> None:
     eps = entry_points(group="console_scripts")
     vault_eps = [e for e in eps if e.name == "agent-vault"]
     assert vault_eps, "agent-vault console script not registered"
