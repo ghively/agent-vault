@@ -10,6 +10,22 @@ See `llm-wiki-schema-spec.md` (the constitution â€” file format & ownership
 real-vs-scaffolding status table, the architecture, a full script reference, and
 setup/usage instructions.
 
+## Install
+
+```bash
+pip install -e .          # from a clone of this repo
+# (A PyPI package is planned for a later release.)
+```
+
+## Usage
+
+```bash
+agent-vault <command> [args]      # run from your vault dir, or set AGENT_VAULT_PATH
+```
+Commands: `find`, `show`, `due`, `expiring`, `creds`, `resolve`, `list`, `compact`
+(see `agent-vault --help`). The vault root (entities, registry, …) is read from
+`AGENT_VAULT_PATH`, defaulting to the current directory.
+
 ## Current state: Stages 0â€“6 complete (all follow-ups closed)
 
 **Built (Stage 0):**

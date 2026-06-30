@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-vault"
+version = "0.1.0"
+description = "Deterministic, file-based document wiki — retrieval, ingest, compile, promote. No model, no hallucination surface."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "SynapseNAS" }]
+# Runtime deps: the vault is nearly pure stdlib. If the import audit (Step 6)
+# finds `yaml` (PyYAML) is actually imported, add  `dependencies = ["pyyaml>=6.0"]`.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+agent-vault = "agent_vault.synapse:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_vault"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+# Legacy scripts may need per-module easing (see Task 5); add overrides there.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
