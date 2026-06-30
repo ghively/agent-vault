@@ -1,5 +1,4 @@
 """Package-level smoke tests: the vault imports as an installed package and its CLI entrypoint is wired."""
-from typing import Any
 from agent_vault import synapse
 from _pytest.monkeypatch import MonkeyPatch
 from _pytest.capture import CaptureFixture
