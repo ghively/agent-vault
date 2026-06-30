@@ -11,12 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from agent_vault import compiler
+
 HERE = Path(__file__).resolve().parent
 VAULT_SRC = HERE.parent
-
-# compiler.py is importable when cwd is the vault root (tests add it to path).
-sys.path.insert(0, str(VAULT_SRC))
-import compiler  # noqa: E402
 
 
 def _sandbox(tmp_path):
@@ -33,7 +31,8 @@ def test_only_compiles_just_one_entity(tmp_path):
         text = p.read_text(encoding="utf-8").replace("status: compiled", "status: stub", 1)
         p.write_text(text, encoding="utf-8")
     env = {**os.environ, "AGENT_VAULT_COMPILER": "mock"}
-    out = subprocess.run([sys.executable, "compiler.py", ".", "--only", "carrier-furnace"],
+    # Run as a module since it's now in a package
+    out = subprocess.run([sys.executable, "-m", "agent_vault.compiler", ".", "--only", "carrier-furnace"],
                          cwd=str(vault), capture_output=True, text=True, env=env)
     assert out.returncode == 0, out.stderr
     assert "carrier-furnace" in out.stdout

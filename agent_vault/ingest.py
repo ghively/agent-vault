@@ -36,7 +36,7 @@ except ImportError:
 
 # vault-wide write lock (overlapping mutating runs serialize; readers don't lock)
 try:
-    from locking import vault_lock
+    from .locking import vault_lock
 except Exception:
     from contextlib import nullcontext
     def vault_lock(_v):
@@ -1661,7 +1661,7 @@ def refresh_index(vault):
     """Run build_index.main() in-process so we don't shell out."""
     try:
         sys.path.insert(0, vault)
-        import build_index
+        from . import build_index
         # build_index uses sys.argv[1] for vault; emulate.
         saved = sys.argv[:]
         sys.argv = ["build_index.py", vault]

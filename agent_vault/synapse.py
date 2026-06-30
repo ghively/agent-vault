@@ -212,7 +212,7 @@ def cmd_resolve(args, ents, aliases):
     if vpath not in sys.path:
         sys.path.insert(0, vpath)
     try:
-        import resolvers
+        from . import resolvers
     except ImportError as ex:
         sys.exit(f"resolver package unavailable ({ex}); cannot resolve {ref}")
 
@@ -239,7 +239,7 @@ def cmd_compact(args, ents, aliases):
     """Bound the append-only discovery logs (proposals/promoted) without changing
     any promotion outcome. Dry-run unless --apply is passed."""
     sys.path.insert(0, os.path.abspath(VAULT))
-    import compact
+    from . import compact
     apply = "--apply" in args
     results = compact.compact_vault(VAULT, apply=apply)
     saved = 0

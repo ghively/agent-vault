@@ -51,7 +51,7 @@ except ImportError:
 
 # vault-wide write lock (overlapping mutating runs serialize; readers don't lock)
 try:
-    from locking import vault_lock
+    from .locking import vault_lock
 except Exception:
     from contextlib import nullcontext
     def vault_lock(_v):
@@ -173,7 +173,7 @@ _BLOB_RE = re.compile(r"^[A-Za-z0-9+/=]{200,}$|^[0-9a-fA-F]{200,}$")
 
 def _fact_regexes():
     """The ingest fact-regexes whose matches pin a line as must-keep. Imported
-    from ingest so the denoiser and the extractor never disagree on 'a fact'."""
+    from .ingest so the denoiser and the extractor never disagree on 'a fact'."""
     global _FACT_RES_CACHE
     if _FACT_RES_CACHE is None:
         try:
@@ -651,7 +651,7 @@ def collect_source_materials(vault, fm):
     Python see in this raw file" is the ingestion module."""
     sys.path.insert(0, vault)
     try:
-        import ingest
+        from . import ingest
     finally:
         sys.path.pop(0)
 

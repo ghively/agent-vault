@@ -1,13 +1,8 @@
 """Resolver ref-parsing is a security boundary: it must reject path traversal and
 CLI-flag injection before any backend touches a child process. Pure, no network."""
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import pytest  # noqa: E402
 
-from resolvers import ResolverError, parse_ref, resolve  # noqa: E402
+from agent_vault.resolvers import ResolverError, parse_ref, resolve  # noqa: E402
 
 
 def test_parse_ref_valid():

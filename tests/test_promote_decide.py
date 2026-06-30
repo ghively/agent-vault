@@ -1,12 +1,7 @@
 """promote.decide() is the deterministic gate that turns aggregated proposals into
 auto-promote / queue / defer / reject. Pure function — test the threshold logic
 directly without touching the registry."""
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import promote  # noqa: E402
+from agent_vault import promote
 
 EMPTY_RS = {
     "tags": [],

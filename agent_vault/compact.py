@@ -30,7 +30,7 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8")
 
 try:
-    from locking import vault_lock
+    from .locking import vault_lock
 except Exception:
     from contextlib import nullcontext
     def vault_lock(_v):
@@ -64,7 +64,7 @@ def _atomic_write_lines(path, records):
 def _proposal_identity(rec):
     """Stable identity for a proposal record, matching promote's aggregate."""
     try:
-        from promote import proposal_identity
+        from .promote import proposal_identity
     except Exception:
         # standalone fallback: identify by kind + the salient name fields
         p = rec.get("proposal") or {}

@@ -18,7 +18,7 @@ def _sandbox(tmp_path):
 
 def _run(vault):
     return subprocess.run(
-        [sys.executable, "validate.py", "."],
+        [sys.executable, "-m", "agent_vault.validate", "."],
         cwd=str(vault),
         capture_output=True,
         text=True,

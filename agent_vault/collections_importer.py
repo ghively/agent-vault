@@ -40,7 +40,7 @@ except ImportError:
 
 # vault-wide write lock (overlapping mutating runs serialize; readers don't lock)
 try:
-    from locking import vault_lock
+    from .locking import vault_lock
 except Exception:
     from contextlib import nullcontext
     def vault_lock(_v):
@@ -513,7 +513,7 @@ def _refresh_index(vault):
     the next daily ingest."""
     try:
         sys.path.insert(0, vault)
-        import build_index
+        from . import build_index
         saved = sys.argv[:]
         sys.argv = ["build_index.py", vault]
         try:

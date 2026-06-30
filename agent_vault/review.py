@@ -54,7 +54,7 @@ except ImportError:
     sys.exit("pyyaml required:  pip install pyyaml --break-system-packages")
 
 try:
-    from locking import vault_lock
+    from .locking import vault_lock
 except Exception:
     from contextlib import nullcontext
     def vault_lock(_v):
@@ -156,7 +156,7 @@ def cmd_approve(vault, sid, reason=""):
 
     sys.path.insert(0, vault)
     try:
-        import promote
+        from . import promote
     finally:
         sys.path.pop(0)
 
@@ -172,7 +172,7 @@ def cmd_approve(vault, sid, reason=""):
         _log_review(vault, ident, rec, "review_approved", note)
         sys.path.insert(0, vault)
         try:
-            import reclassify_apply
+            from . import reclassify_apply
         finally:
             sys.path.pop(0)
         results = reclassify_apply.apply_all(vault, only_slug=slug)
