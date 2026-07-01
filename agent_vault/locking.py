@@ -22,9 +22,12 @@ A runtime flock failure (e.g. ENOLCK on some NFS mounts â€” plausible on a 
 is NOT silently swallowed: we warn loudly on stderr and proceed, so the
 operator learns the mutating passes are running unserialized.
 """
+from __future__ import annotations
+
 import os
 import sys
 import time
+from typing import Any
 
 LOCK_NAME = "_vault.lock"
 DEFAULT_TIMEOUT_S = 600.0
@@ -38,9 +41,9 @@ class LockTimeout(RuntimeError):
 class vault_lock:
     """Context manager: exclusive advisory lock on registry/_vault.lock."""
 
-    def __init__(self, vault, timeout_s=None):
+    def __init__(self, vault: str, timeout_s: float | None = None) -> None:
         self.path = os.path.join(vault, "registry", LOCK_NAME)
-        self.fh = None
+        self.fh: Any = None
         if timeout_s is None:
             try:
                 timeout_s = float(os.environ.get("AGENT_VAULT_LOCK_TIMEOUT_S",
@@ -49,7 +52,7 @@ class vault_lock:
                 timeout_s = DEFAULT_TIMEOUT_S
         self.timeout_s = timeout_s
 
-    def __enter__(self):
+    def __enter__(self) -> vault_lock:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.fh = open(self.path, "w")
         try:
@@ -79,7 +82,7 @@ class vault_lock:
                       f"serialize", file=sys.stderr)
                 return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: Any) -> None:
         if self.fh is None:
             return
         try:
