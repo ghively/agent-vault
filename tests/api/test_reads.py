@@ -1,7 +1,6 @@
 """Tests for read endpoints (entities, review queues, creds)."""
 
 import json
-import os
 import tempfile
 from pathlib import Path
 

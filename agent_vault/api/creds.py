@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,8 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from agent_vault.api.config import Settings
+from agent_vault.resolvers import parse_ref, resolve
+from agent_vault import compiler
 
 router = APIRouter()
 
@@ -100,16 +101,7 @@ async def resolve_credential(
     if not ref:
         raise HTTPException(status_code=502, detail="credential_ref not found or unreadable")
 
-    # Import resolver from the vault (resolvers package lives at <vault>/resolvers)
-    vpath = os.path.abspath(vault)
-    if vpath not in sys.path:
-        sys.path.insert(0, vpath)
-
     try:
-        # Import resolver functions directly - parse_ref and resolve
-        # We need to import these as functions, not as a module
-        from resolvers import parse_ref, resolve  # type: ignore
-
         # Parse the ref first (validation)
         _ = parse_ref(ref)
 
@@ -167,16 +159,7 @@ async def recompile_entity(
     if not entity_path.exists():
         raise HTTPException(status_code=404, detail="entity file not found")
 
-    # Import compiler from the vault
-    vpath = os.path.abspath(vault)
-    if vpath not in sys.path:
-        sys.path.insert(0, vpath)
-
     try:
-        # Import compiler module
-        sys.path.insert(0, str(vault))
-        import compiler  # type: ignore
-
         # Acquire vault-wide write lock for the compile
         from agent_vault.locking import vault_lock, LockTimeout
 

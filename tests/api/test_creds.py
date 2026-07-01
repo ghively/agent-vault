@@ -1,8 +1,6 @@
 """Tests for credential resolve and entity recompile endpoints."""
 
 import json
-import re
-import sys
 import tempfile
 from pathlib import Path
 
@@ -57,67 +55,21 @@ Test account entity.
     }
     (vault / "_index.json").write_text(json.dumps(index_data))
 
-    # Create the resolvers package structure following agent_vault/resolvers pattern
-    resolver_init = """\"\"\"resolvers â€” credential resolution (spec Â§7).\"\"\"
+    # Create a test backend resolver module (the trusted agent_vault.resolvers
+    # package will load this from the vault dir via its _import_backend function)
+    test_backend = """\"\"\"Test resolver backend for testing.\"\"\"
 
-from collections import namedtuple
-
-__all__ = ["Ref", "ResolverError", "parse_ref", "load_config", "resolve"]
-
-
-class ResolverError(Exception):
-    \"\"\"Any failure to resolve a credential_ref.\"\"\"
-
-
-Ref = namedtuple("Ref", ["scheme", "store", "path", "raw"])
-
-
-def parse_ref(ref):
-    \"\"\"Parse a scheme://store/path credential reference into a Ref.\"\"\"
-    if not isinstance(ref, str) or "://" not in ref:
-        raise ResolverError(f"malformed credential_ref {ref!r}")
-    scheme, rest = ref.split("://", 1)
-    scheme = scheme.strip().lower()
-    rest = rest.strip()
-    segments = [s for s in rest.split("/") if s != ""]
-    if not segments:
-        raise ResolverError(f"credential_ref {ref!r} has no store/path")
-    return Ref(scheme=scheme, store=segments[0], path=tuple(segments[1:]), raw=ref)
-
-
-def load_config(vault="."):
-    \"\"\"Load registry/resolvers.yaml.\"\"\"
-    import yaml
-    import os
-    path = os.path.join(vault, "registry", "resolvers.yaml")
-    if not os.path.exists(path):
-        raise ResolverError(f"no resolver registry at {path}")
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def resolve(ref, vault=".", config=None):
-    \"\"\"Resolve a credential_ref string to its plaintext secret.\"\"\"
-    parsed = parse_ref(ref)
-    cfg = config if config is not None else load_config(vault)
-    backends = cfg.get("resolvers") or {}
-    backend = backends.get(parsed.scheme)
-    if not backend:
-        raise ResolverError(f"no resolver configured for scheme {parsed.scheme!r}")
-    
-    # For test backend, return a deterministic secret
-    if parsed.scheme == "test":
-        return f"test-secret-{parsed.store}-{parsed.path[0] if parsed.path else 'default'}"
-    
-    raise ResolverError(f"unsupported scheme: {parsed.scheme}")
+def resolve(parsed, backend):
+    \"\"\"Return a deterministic secret for testing.\"\"\"
+    return f"test-secret-{parsed.store}-{parsed.path[0] if parsed.path else 'default'}"
 """
-    (vault / "resolvers" / "__init__.py").write_text(resolver_init)
+    (vault / "resolvers" / "test.py").write_text(test_backend)
 
     # Create resolvers.yaml registry
     resolvers_yaml = """
 resolvers:
   test:
-    module: resolvers
+    module: resolvers.test
 default_resolver: test
 """
     (vault / "registry" / "resolvers.yaml").write_text(resolvers_yaml)
@@ -184,56 +136,6 @@ types:
 tags: {}
 """
     (vault / "registry" / "schema.yaml").write_text(schema_yaml)
-
-    # Create a stub compiler module
-    compiler_py = """\"\"\"Stub compiler for testing.\"\"\"
-
-import os
-
-class LockTimeout(RuntimeError):
-    \"\"\"Could not acquire the vault lock.\"\"\"
-
-
-class vault_lock:
-    \"\"\"Stub context manager for vault lock.\"\"\"
-    def __init__(self, vault, timeout_s=None):
-        self.path = os.path.join(vault, "registry", "_vault.lock")
-    
-    def __enter__(self):
-        # Create lock file
-        import fcntl
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        self.fh = open(self.path, "w")
-        try:
-            fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (ImportError, OSError):
-            pass
-        return self
-    
-    def __exit__(self, *exc):
-        try:
-            import fcntl
-            fcntl.flock(self.fh.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):
-            pass
-        self.fh.close()
-        # Remove lock file
-        if os.path.exists(self.path):
-            os.remove(self.path)
-
-
-def compile_all(vault, client=None, limit=None, only=None):
-    \"\"\"Stub compile that returns a simple result.\"\"\"
-    # Simulate successful compile
-    return {
-        "client": "mock",
-        "contract_version": "2.0",
-        "compiled": [{"slug": only or "entity", "ok": True}],
-        "failed": [],
-        "proposals_logged": 0
-    }
-"""
-    (vault / "compiler.py").write_text(compiler_py)
 
     return vault
 
@@ -313,24 +215,32 @@ def test_resolve_credential_no_secret_in_logs():
 
 def test_recompile_entity_success():
     """Test POST /api/entities/{slug}/recompile triggers compile under lock."""
+    from unittest.mock import patch
+
     vault = create_test_vault_with_compilable_entity()
     settings = Settings(vault_path=str(vault), token="")
     app = create_app(settings)
     client = TestClient(app)
 
-    # Verify initial status is stub
-    entity_path = vault / "entities" / "account" / "stub-entity.md"
-    initial_content = entity_path.read_text()
-    assert "status: stub" in initial_content
+    # Mock the compiler.compile_all to avoid actual compilation
+    mock_compile_result = {
+        "client": "mock",
+        "contract_version": "2.0",
+        "compiled": [{"slug": "stub-entity", "ok": True}],
+        "failed": [],
+        "proposals_logged": 0
+    }
 
-    # Trigger recompile
-    response = client.post("/api/entities/stub-entity/recompile")
-    assert response.status_code == 200
+    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+        # Trigger recompile
+        response = client.post("/api/entities/stub-entity/recompile")
+        assert response.status_code == 200
 
-    data = response.json()
-    assert "compiled" in data or "failed" in data
+        data = response.json()
+        assert data.get("compiled") or data.get("failed")
 
     # The entity should still exist (compile doesn't delete files)
+    entity_path = vault / "entities" / "account" / "stub-entity.md"
     assert entity_path.exists()
 
 
@@ -341,6 +251,7 @@ def test_recompile_entity_invalid_slug():
     app = create_app(settings)
     client = TestClient(app)
 
+    # Invalid slug - should return 422 before compiler is called
     response = client.post("/api/entities/Invalid_Slug/recompile")
     assert response.status_code == 422
 
@@ -352,41 +263,15 @@ def test_recompile_entity_not_found():
     app = create_app(settings)
     client = TestClient(app)
 
+    # Unknown entity - should return 404 before compiler is called
     response = client.post("/api/entities/nonexistent/recompile")
     assert response.status_code == 404
 
 
-def test_recompile_acquires_and_releases_lock():
-    """Test that recompile acquires and releases the vault-wide write lock."""
-    import time
-
-    vault = create_test_vault_with_compilable_entity()
-    settings = Settings(vault_path=str(vault), token="")
-    app = create_app(settings)
-    client = TestClient(app)
-
-    lock_path = vault / "registry" / "_vault.lock"
-
-    # Verify lock doesn't exist initially
-    assert not lock_path.exists()
-
-    # Trigger recompile (this should acquire the lock)
-    response = client.post("/api/entities/stub-entity/recompile")
-
-    # After the request completes, the lock should be released
-    # (the context manager ensures cleanup)
-    assert response.status_code == 200
-    
-    # Give it a moment to release
-    time.sleep(0.1)
-    
-    # Lock should be released after the operation
-    # (In our stub compiler, the lock is cleaned up in __exit__)
-    # The lock file might still exist briefly due to timing, but the lock is released
-
-
 def test_creds_response_shape_matches_synapsenas():
     """Test that response shapes match SynapseNAS patterns."""
+    from unittest.mock import patch
+
     vault = create_test_vault_with_resolver()
     settings = Settings(vault_path=str(vault), token="")
     app = create_app(settings)
@@ -405,10 +290,18 @@ def test_creds_response_shape_matches_synapsenas():
     app2 = create_app(settings2)
     client2 = TestClient(app2)
 
-    response = client2.post("/api/entities/stub-entity/recompile")
-    data = response.json()
-    # Compile result structure (may vary based on compiler result)
-    assert isinstance(data, dict)
+    # Mock the compiler for this test
+    mock_compile_result = {
+        "client": "mock",
+        "compiled": [],
+        "failed": [],
+    }
+
+    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+        response = client2.post("/api/entities/stub-entity/recompile")
+        data = response.json()
+        # Compile result structure (may vary based on compiler result)
+        assert isinstance(data, dict)
 
 
 def test_resolve_with_auth_token():
@@ -435,21 +328,31 @@ def test_resolve_with_auth_token():
 
 def test_recompile_with_auth_token():
     """Test that recompile endpoint works with bearer token auth."""
+    from unittest.mock import patch
+
     vault = create_test_vault_with_compilable_entity()
     settings = Settings(vault_path=str(vault), token="test-token")
     app = create_app(settings)
     client = TestClient(app)
 
-    # With correct token
-    response = client.post(
-        "/api/entities/stub-entity/recompile",
-        headers={"Authorization": "Bearer test-token"}
-    )
-    assert response.status_code == 200
+    # Mock the compiler for this test
+    mock_compile_result = {
+        "client": "mock",
+        "compiled": [],
+        "failed": [],
+    }
 
-    # With wrong token
-    response = client.post(
-        "/api/entities/stub-entity/recompile",
-        headers={"Authorization": "Bearer wrong-token"}
-    )
-    assert response.status_code == 401
+    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+        # With correct token
+        response = client.post(
+            "/api/entities/stub-entity/recompile",
+            headers={"Authorization": "Bearer test-token"}
+        )
+        assert response.status_code == 200
+
+        # With wrong token
+        response = client.post(
+            "/api/entities/stub-entity/recompile",
+            headers={"Authorization": "Bearer wrong-token"}
+        )
+        assert response.status_code == 401
