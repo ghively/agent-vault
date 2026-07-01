@@ -10,6 +10,7 @@ from agent_vault.api.auth import create_auth_dependency
 from agent_vault.api.config import Settings
 from agent_vault.api import reads
 from agent_vault.api import creds
+from agent_vault.api import review
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -50,5 +51,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     # Include credential resolve and recompile endpoints
     app.include_router(creds.router, prefix="/api")
+
+    # Include review action endpoints
+    app.include_router(review.router, prefix="/api")
 
     return app
