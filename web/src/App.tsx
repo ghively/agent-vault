@@ -1,11 +1,11 @@
 import { useState } from "react";
-import Browse from "./screens/Browse";
-import Wiki from "./screens/Wiki";
-import Vault from "./screens/Vault";
-import Creds from "./screens/Creds";
-import Review from "./screens/Review";
-import Pipeline from "./screens/Pipeline";
-import CommandDeck from "./screens/CommandDeck";
+import { Browse } from "./screens/Browse";
+import { Wiki } from "./screens/Wiki";
+import { Vault } from "./screens/Vault";
+import { Creds } from "./screens/Creds";
+import { Review } from "./screens/Review";
+import { Pipeline } from "./screens/Pipeline";
+import { CommandDeck } from "./screens/CommandDeck";
 
 const SCREENS = [
   { id: "browse", label: "Browse", component: Browse },
@@ -18,9 +18,28 @@ const SCREENS = [
 ];
 
 function App() {
-  const [activeScreen, setActiveScreen] = useState("browse");
+  const [activeScreen, setActiveScreen] = useState("vault"); // Start at vault hub
 
-  const ActiveComponent = SCREENS.find((s) => s.id === activeScreen)?.component || Browse;
+  const renderScreen = () => {
+    switch (activeScreen) {
+      case "vault":
+        return <Vault onNavigate={setActiveScreen} />;
+      case "browse":
+        return <Browse />;
+      case "wiki":
+        return <Wiki />;
+      case "creds":
+        return <Creds />;
+      case "review":
+        return <Review />;
+      case "pipeline":
+        return <Pipeline />;
+      case "commanddeck":
+        return <CommandDeck />;
+      default:
+        return <Vault onNavigate={setActiveScreen} />;
+    }
+  };
 
   return (
     <div style={{ display: "flex", height: "100vh", backgroundColor: "#040804", color: "#e0e0e0", fontFamily: "system-ui, sans-serif" }}>
@@ -60,8 +79,8 @@ function App() {
         ))}
       </nav>
       {/* Main content */}
-      <main style={{ flex: 1, overflow: "auto", padding: 20 }}>
-        <ActiveComponent />
+      <main style={{ flex: 1, overflow: "auto", padding: 0 }}>
+        {renderScreen()}
       </main>
     </div>
   );

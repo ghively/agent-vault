@@ -23,8 +23,9 @@ describe("App", () => {
         <App />
       </QueryClientProvider>
     );
-    expect(screen.getByText("Agent Vault")).toBeInTheDocument();
-    expect(screen.getAllByText("Browse")).toHaveLength(2); // Nav + content
+    const agentVaultElements = screen.getAllByText("Agent Vault");
+    expect(agentVaultElements.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Browse")).toBeInTheDocument();
     expect(screen.getByText("Wiki")).toBeInTheDocument();
     expect(screen.getByText("Vault")).toBeInTheDocument();
     expect(screen.getByText("Credentials")).toBeInTheDocument();
@@ -33,16 +34,16 @@ describe("App", () => {
     expect(screen.getByText("Command Deck")).toBeInTheDocument();
   });
 
-  it("renders the Browse screen by default", () => {
+  it("renders the Vault hub screen by default", () => {
     render(
       <QueryClientProvider client={queryClient}>
         <App />
       </QueryClientProvider>
     );
-    // Check that Browse appears in both nav and content
-    const browseElements = screen.getAllByText("Browse");
-    expect(browseElements).toHaveLength(2);
-    // The second one should be in the main content area
-    expect(browseElements[1].textContent).toBe("Browse");
+    // Vault hub should be visible by default
+    const agentVaultElements = screen.getAllByText("Agent Vault");
+    expect(agentVaultElements.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("BROWSE")).toBeInTheDocument();
+    expect(screen.getByText("WIKI")).toBeInTheDocument();
   });
 });
