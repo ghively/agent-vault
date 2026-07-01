@@ -103,10 +103,10 @@ async def resolve_credential(
 
     try:
         # Parse the ref first (validation)
-        _ = parse_ref(ref)
+        _ = parse_ref(ref)  # type: ignore[no-untyped-call]  # legacy untyped resolver fn
 
         # Resolve the ref to get the actual secret
-        secret = resolve(ref, str(vault))
+        secret = resolve(ref, str(vault))  # type: ignore[no-untyped-call]  # legacy untyped resolver fn
 
         # Return the secret - never log it
         return {"ok": True, "secret": secret}
@@ -190,7 +190,7 @@ async def recompile_entity(
             os.replace(tmp, str(entity_path))
 
             # Run compile for just this entity
-            result: dict[str, Any] = compiler.compile_all(str(vault), only=slug)
+            result: dict[str, Any] = compiler.compile_all(str(vault), only=slug)  # type: ignore[no-untyped-call]  # legacy untyped compile fn
 
             return result
 
