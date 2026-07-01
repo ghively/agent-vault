@@ -1,30 +1,68 @@
 # Agent Vault
 
-A harness-independent LLM wiki for managing a household. The contract is the files;
-everything around them (intake, runner, compile model, secret backend) is swappable.
+A **standalone** knowledge-wiki service for managing household information. Stores
+documents, credentials, and structured data as files with a deterministic pipeline
+(intake → classify → compile → promote). Can be run as a CLI, an HTTP service,
+or with a React UI.
 
-See `llm-wiki-schema-spec.md` (the constitution â€” file format & ownership rules) and
-`llm-wiki-build-guide.md` (the taxonomy & full build order) for the design.
-
-**New here?** Read [`DOCS.md`](./DOCS.md) â€” plain-language overview, an honest
+**New here?** Read [`DOCS.md`](./DOCS.md) — plain-language overview, an honest
 real-vs-scaffolding status table, the architecture, a full script reference, and
 setup/usage instructions.
+
+## What it is
+
+- **Package**: Install via `pip install -e .` — provides the `agent-vault` CLI
+- **Service**: Run `agent-vault-serve` to start the FastAPI HTTP service (credential resolution)
+- **UI**: Run `cd web && npm install && npm run dev` for the React frontend
+
+The vault is now a **standalone product** (severed from SynapseNAS). It can be used
+independently or consumed by other services over HTTP.
 
 ## Install
 
 ```bash
-pip install -e .          # from a clone of this repo
-# (A PyPI package is planned for a later release.)
+git clone <repo-url>
+cd agent-vault
+pip install -e .          # installs the CLI and service
 ```
 
 ## Usage
 
+### CLI (retrieval and pipeline)
+
 ```bash
 agent-vault <command> [args]      # run from your vault dir, or set AGENT_VAULT_PATH
 ```
+
 Commands: `find`, `show`, `due`, `expiring`, `creds`, `resolve`, `list`, `compact`
 (see `agent-vault --help`). The vault root (entities, registry, …) is read from
 `AGENT_VAULT_PATH`, defaulting to the current directory.
+
+### HTTP Service
+
+```bash
+agent-vault-serve          # starts the FastAPI service
+# Environment:
+#   AGENT_VAULT_HOST (default: 127.0.0.1)
+#   AGENT_VAULT_PORT (default: 7778)
+#   AGENT_VAULT_PATH (default: ./)
+#   VAULT_TOKEN (optional bearer token for auth)
+```
+
+The service exposes `/api/creds/{slug}/resolve` for credential resolution and
+`/api/health` for health checks.
+
+### Web UI
+
+```bash
+cd web
+npm install
+npm run dev               # Vite dev server at http://localhost:5173
+# Environment:
+#   VITE_VAULT_API_URL (default: http://127.0.0.1:7778)
+```
+
+The React UI provides a browser-based interface to the vault's contents.
 
 ## Current state: Stages 0â€“6 complete (all follow-ups closed)
 
@@ -235,6 +273,32 @@ reclassify proposals stay rejected at the same sighting count, are skipped
 by a bare `reclassify_apply` run, and re-queue when a second entity sights
 them; a 0.95-confidence gated stub lands as needs-review, approve-entity
 flips it, and human prose is preserved byte-for-byte on approval.
+
+## Architecture
+
+The vault is a **three-tier standalone product**:
+
+1. **CLI tier** (`agent_vault/`) — Python scripts for ingestion, classification,
+   compilation, and retrieval. All deterministic except the prose-generation step.
+2. **Service tier** (`agent_vault/api/`) — FastAPI HTTP service exposing credential
+   resolution and health endpoints for remote access.
+3. **UI tier** (`web/`) — React/TypeScript frontend for browser-based access.
+
+```
+agent-vault/                    # Repo root
+├── agent_vault/                # Python package (CLI + service)
+│   ├── api/                    # FastAPI service
+│   │   ├── app.py              # Service factory
+│   │   ├── routes/             # API endpoints
+│   │   └── config.py           # Settings (VAULT_TOKEN, etc.)
+│   ├── *.py                    # Pipeline scripts
+│   └── resolvers/              # Credential backends
+├── web/                        # React UI (Vite + TypeScript)
+│   ├── src/                    # Components
+│   └── package.json
+├── cadences/                   # Scheduled scripts
+└── tests/                      # Test suite
+```
 
 ## Daily/typical commands
 

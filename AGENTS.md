@@ -2,13 +2,15 @@
 
 > The authoritative **structure + invariant reference** for Agent Vault. The vault
 > Claude Code automations (vault-keeper, vault-doctor, the `/vault-*` skills, the
-> guardian hooks) read THIS file as their source of truth. Parent: [../AGENTS.md](../AGENTS.md).
-> Deep docs: [`README.md`](README.md), [`DOCS.md`](DOCS.md),
-> [`llm-wiki-schema-spec.md`](llm-wiki-schema-spec.md) (the "constitution").
+> guardian hooks) read THIS file as their source of truth. Deep docs: [`README.md`](README.md),
+> [`DOCS.md`](DOCS.md), [`llm-wiki-schema-spec.md`](llm-wiki-schema-spec.md) (the "constitution").
 
-A harness-independent, **file-based** household knowledge wiki - the repo's original
-app, now the platform's central pivot piece. It runs standalone (cron/systemd) and is
-also driven by the server (which shells out to it). Nothing here imports the server.
+A **standalone**, file-based household knowledge wiki. It runs as:
+- **CLI**: `agent-vault` commands for retrieval and pipeline operations
+- **Service**: `agent-vault-serve` (FastAPI HTTP service for credential resolution)
+- **UI**: React web interface in `web/`
+
+Formerly embedded in SynapseNAS; now a standalone product consumed over HTTP.
 
 ## The core invariant (never break this)
 
@@ -108,11 +110,16 @@ is at **version 2.0** — it now teaches the LLM to emit three new proposal kind
 Changing the prompt/proposal shape requires a version bump (see `/vault-extend-compiler`) so
 changes are audited. `AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI).
 
-## Integration boundary (do not cross)
+## Integration boundary (HTTP)
 
-The server **never imports** this app. Reads: `server/vault.py` parses the file contract.
-Mutations: `server/actions.py` shells out to `synapse.py`/`review.py` then re-runs
-`build_index.py`. Keep it file/CLI-contract only - no in-process coupling.
+The vault is now a **standalone HTTP service**. Consumers (like SynapseNAS) call it
+over the network:
+
+- **Endpoint**: `http://127.0.0.1:7778/api/creds/{slug}/resolve` (credential resolution)
+- **Health**: `http://127.0.0.1:7778/api/health`
+- **Auth**: Optional `VAULT_TOKEN` bearer token
+
+No file-system or subprocess coupling — the boundary is HTTP + JSON.
 
 ## The vault automation suite (`.claude/`)
 
