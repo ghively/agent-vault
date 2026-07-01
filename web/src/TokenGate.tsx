@@ -4,9 +4,36 @@ import { useAuth } from "./store/auth";
 export function TokenGate({ children }: { children: React.ReactNode }) {
   const { token, setToken } = useAuth();
   const [input, setInput] = useState("");
+  const [err, setErr] = useState("");
+  const [checking, setChecking] = useState(false);
 
   if (token) {
     return <>{children}</>;
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const t = input.trim();
+    if (!t || checking) return;
+    setChecking(true);
+    setErr("");
+    // Validate the token against the API BEFORE trusting it — a wrong/stale
+    // token otherwise mounts the app, 401s on the first call, and bounces back
+    // here with no explanation.
+    try {
+      const r = await fetch("/api/health", { headers: { Authorization: `Bearer ${t}` } });
+      if (r.ok) {
+        setToken(t);
+      } else if (r.status === 401 || r.status === 403) {
+        setErr("Invalid token — please re-check it.");
+      } else {
+        setErr(`Unexpected response (${r.status}).`);
+      }
+    } catch {
+      setErr("Can't reach the vault service.");
+    } finally {
+      setChecking(false);
+    }
   }
 
   return (
@@ -37,14 +64,7 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
         <p style={{ fontSize: 14, color: "#888", marginBottom: 30 }}>
           Enter your vault token to continue
         </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (input.trim()) {
-              setToken(input.trim());
-            }
-          }}
-        >
+        <form onSubmit={submit}>
           <input
             type="password"
             value={input}
@@ -66,7 +86,7 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
           />
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || checking}
             style={{
               width: "100%",
               padding: "12px",
@@ -80,8 +100,11 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
               transition: "all 0.15s",
             }}
           >
-            Access Vault
+            {checking ? "Checking…" : "Access Vault"}
           </button>
+          {err && (
+            <div style={{ marginTop: 16, color: "#ff5f6d", fontSize: 13 }}>{err}</div>
+          )}
         </form>
       </div>
     </div>

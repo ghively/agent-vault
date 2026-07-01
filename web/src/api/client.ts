@@ -1,6 +1,9 @@
 import { useAuth } from "../store/auth";
 
-const VAULT_API_URL = import.meta.env.VITE_VAULT_API_URL || "http://127.0.0.1:7778";
+// Empty/unset => same-origin (relative /api) — correct when the UI is served
+// from the vault API service itself (e.g. http://<host>:7778/). Set
+// VITE_VAULT_API_URL only for dev against a separate backend.
+const VAULT_API_URL = import.meta.env.VITE_VAULT_API_URL ?? "";
 
 export class ApiError extends Error {
   status: number;

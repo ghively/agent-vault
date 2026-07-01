@@ -2,65 +2,69 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from agent_vault.api.auth import create_auth_dependency
 from agent_vault.api.config import Settings
-from agent_vault.api import reads
 from agent_vault.api import creds
-from agent_vault.api import review
-from agent_vault.api import jobs
 from agent_vault.api import history
+from agent_vault.api import jobs
+from agent_vault.api import reads
+from agent_vault.api import review
 
 
 def create_app(settings: Settings) -> FastAPI:
     """Create and configure the FastAPI application.
 
-    Args:
-        settings: Configuration settings (host, port, vault_path, token)
-
-    Returns:
-        Configured FastAPI application instance
+    Auth is scoped to ``/api`` only (attached to each /api route/include), so a
+    browser can load the SPA UI openly; the UI's token gate then sends the bearer
+    on its /api calls. The UI itself is served open from the built ``web/dist``.
     """
-    # Build dependencies list
-    dependencies = []
+    # Auth applies to /api only (see docstring) — empty list = open (no token set).
+    api_deps: list[Any] = []
     if settings.token:
-        dependencies.append(Depends(create_auth_dependency(settings.token)))
+        api_deps.append(Depends(create_auth_dependency(settings.token)))
 
     app = FastAPI(
         title="Agent Vault API",
         description="HTTP API for Agent Vault document wiki",
         version="0.1.0",
-        dependencies=dependencies,
     )
-
-    # Store settings in app state for dependency injection
     app.state.settings = settings
 
-    @app.get("/api/health")
+    @app.get("/api/health", dependencies=api_deps)
     def health() -> JSONResponse:
-        """Health check endpoint.
-
-        Returns:
-            JSON response with {"ok": true}
-        """
+        """Health check."""
         return JSONResponse(content={"ok": True})
 
-    # Include read endpoints
-    app.include_router(reads.router, prefix="/api")
+    # /api routers — original per-include registration (prefix=/api) + auth dep.
+    app.include_router(reads.router, prefix="/api", dependencies=api_deps)
+    app.include_router(creds.router, prefix="/api", dependencies=api_deps)
+    app.include_router(review.router, prefix="/api", dependencies=api_deps)
+    app.include_router(jobs.router, prefix="/api", dependencies=api_deps)
+    app.include_router(history.router, prefix="/api", dependencies=api_deps)
 
-    # Include credential resolve and recompile endpoints
-    app.include_router(creds.router, prefix="/api")
+    # Serve the built vault UI (web/dist) when present — open (no auth) so a
+    # browser can load it; the UI's token gate handles /api authorization.
+    dist = Path(__file__).resolve().parents[2] / "web" / "dist"
+    if dist.is_dir():
+        assets = dist / "assets"
+        if assets.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
-    # Include review action endpoints
-    app.include_router(review.router, prefix="/api")
+        @app.get("/favicon.ico")
+        async def favicon() -> Response:
+            ico = dist / "favicon.ico"
+            return FileResponse(ico) if ico.exists() else Response(status_code=204)
 
-    # Include async job runner endpoints
-    app.include_router(jobs.router, prefix="/api")
-
-    # Include history endpoints
-    app.include_router(history.router, prefix="/api")
+        @app.get("/{full_path:path}")
+        async def spa(full_path: str) -> FileResponse:
+            # SPA fallback: any non-/api, non-/assets path serves index.html.
+            return FileResponse(dist / "index.html")
 
     return app

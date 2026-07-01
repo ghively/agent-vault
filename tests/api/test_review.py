@@ -221,10 +221,11 @@ def test_reject_entity_invalid_ref():
     app = create_app(settings)
     client = TestClient(app)
 
-    # Invalid ref - path traversal is rejected by FastAPI before our validation
-    # (404 is acceptable since FastAPI's path type doesn't match "..")
+    # Invalid ref - path traversal is rejected. 404/422 = no match / validation;
+    # 405 = the SPA catch-all (GET) shadows the normalized traversal path. All
+    # three reject the attempt (never 200).
     response = client.post("/api/review/entities/../etc/passwd/reject")
-    assert response.status_code in (404, 422)  # Both are valid security outcomes
+    assert response.status_code in (404, 405, 422)
 
 
 def test_lock_held_during_approve():
