@@ -11,6 +11,7 @@ from agent_vault.api.config import Settings
 from agent_vault.api import reads
 from agent_vault.api import creds
 from agent_vault.api import review
+from agent_vault.api import jobs
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -54,5 +55,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     # Include review action endpoints
     app.include_router(review.router, prefix="/api")
+
+    # Include async job runner endpoints
+    app.include_router(jobs.router, prefix="/api")
 
     return app

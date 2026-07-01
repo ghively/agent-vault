@@ -240,7 +240,6 @@ def test_lock_held_during_approve():
     # Track if lock was acquired
     lock_acquired = threading.Event()
 
-    original_lock = None
     captured_lock = None
 
     def mock_lock_enter(self):
