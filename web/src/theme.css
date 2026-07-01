@@ -1,0 +1,46 @@
+/* PHOSPHOR theme system — CSS custom properties */
+/* These match the existing C object values in theme.ts for pixel-perfect dark theme compatibility */
+
+:root {
+  /* Dark theme (default) — exact matches to theme.ts C object */
+  --ns-ground: #040804;
+  --ns-green: #00ff00;
+  --ns-bright: #27c93f;
+  --ns-cyan: #00f3ff;
+  --ns-purple: #8000ff;
+  --ns-lilac: #b266ff;
+  --ns-amber: #ffbd2e;
+  --ns-red: #ff5f56;
+  --ns-blue: #9fe0ff;
+  --ns-text: #ccffcc;
+  --ns-muted-green: #6fa06f;
+  --ns-dim: #888;
+  --ns-dim2: #666;
+
+  /* Density — comfortable (default) */
+  --ns-pad: 1;
+  --ns-font-scale: 1;
+}
+
+/* Light theme override */
+[data-theme="light"] {
+  --ns-ground: #f6f7f9;
+  --ns-green: #1a7f37;
+  --ns-bright: #2da042;
+  --ns-cyan: #0969da;
+  --ns-purple: #6f42c1;
+  --ns-lilac: #8c68d6;
+  --ns-amber: #bf8700;
+  --ns-red: #cf222e;
+  --ns-blue: #2b7cb9;
+  --ns-text: #1a1d21;
+  --ns-muted-green: #4a7a4a;
+  --ns-dim: #57606a;
+  --ns-dim2: #3d444d;
+}
+
+/* Density — compact */
+[data-density="compact"] {
+  --ns-pad: 0.75;
+  --ns-font-scale: 0.92;
+}
