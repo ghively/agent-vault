@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from agent_vault.api.auth import create_auth_dependency
 from agent_vault.api.config import Settings
+from agent_vault.api import reads
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -31,6 +32,9 @@ def create_app(settings: Settings) -> FastAPI:
         dependencies=dependencies,
     )
 
+    # Store settings in app state for dependency injection
+    app.state.settings = settings
+
     @app.get("/api/health")
     def health() -> JSONResponse:
         """Health check endpoint.
@@ -39,5 +43,8 @@ def create_app(settings: Settings) -> FastAPI:
             JSON response with {"ok": true}
         """
         return JSONResponse(content={"ok": True})
+
+    # Include read endpoints
+    app.include_router(reads.router, prefix="/api")
 
     return app
