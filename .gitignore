@@ -12,3 +12,4 @@ _index.json
 _index.md
 # Local orchestration scratch (task briefs/reports/review packages)
 .superpowers/
+web/node_modules/
