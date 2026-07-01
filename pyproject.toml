@@ -11,13 +11,15 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "SynapseNAS" }]
 # Runtime deps: the vault is nearly pure stdlib. PyYAML is required for YAML parsing.
-dependencies = ["pyyaml>=6.0"]
+# Phase 2 adds FastAPI service deps.
+dependencies = ["pyyaml>=6.0", "fastapi>=0.115", "uvicorn[standard]>=0.32", "sse-starlette>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "httpx2>=0.2"]
 
 [project.scripts]
 agent-vault = "agent_vault.synapse:main"
+agent-vault-serve = "agent_vault.serve:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_vault"]
@@ -44,6 +46,9 @@ target-version = "py311"
 python_version = "3.11"
 strict = true
 # Legacy scripts may need per-module easing (see Task 5); add overrides there.
+
+# NEW code under agent_vault/api/ MUST be mypy-strict — this is the default.
+# Only legacy scripts get eased below.
 
 # Legacy scripts predate strict typing; ease them while keeping NEW code strict.
 # These are the original Agent Vault scripts written before mypy adoption.

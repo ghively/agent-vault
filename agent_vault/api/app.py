@@ -1,0 +1,43 @@
+"""FastAPI application factory for Agent Vault API."""
+
+from __future__ import annotations
+
+
+from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
+
+from agent_vault.api.auth import create_auth_dependency
+from agent_vault.api.config import Settings
+
+
+def create_app(settings: Settings) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        settings: Configuration settings (host, port, vault_path, token)
+
+    Returns:
+        Configured FastAPI application instance
+    """
+    # Build dependencies list
+    dependencies = []
+    if settings.token:
+        dependencies.append(Depends(create_auth_dependency(settings.token)))
+
+    app = FastAPI(
+        title="Agent Vault API",
+        description="HTTP API for Agent Vault document wiki",
+        version="0.1.0",
+        dependencies=dependencies,
+    )
+
+    @app.get("/api/health")
+    def health() -> JSONResponse:
+        """Health check endpoint.
+
+        Returns:
+            JSON response with {"ok": true}
+        """
+        return JSONResponse(content={"ok": True})
+
+    return app
