@@ -12,6 +12,7 @@ from agent_vault.api import reads
 from agent_vault.api import creds
 from agent_vault.api import review
 from agent_vault.api import jobs
+from agent_vault.api import history
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -58,5 +59,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     # Include async job runner endpoints
     app.include_router(jobs.router, prefix="/api")
+
+    # Include history endpoints
+    app.include_router(history.router, prefix="/api")
 
     return app
