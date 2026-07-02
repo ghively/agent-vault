@@ -201,7 +201,7 @@ export function MobileShell() {
                 letterSpacing: 2,
                 marginBottom: 8,
               }}>
-                SYNAPSENAS
+                AGENT VAULT
               </div>
               <div style={{ fontSize: 13 }}>
                 Tap ☰ to open an application

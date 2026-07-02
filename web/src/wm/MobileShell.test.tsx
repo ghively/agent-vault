@@ -19,7 +19,7 @@ function renderMobileShell() {
 describe("MobileShell", () => {
   it("renders empty state when no apps are open", () => {
     renderMobileShell();
-    expect(screen.getByText("SYNAPSENAS")).toBeInTheDocument();
+    expect(screen.getByText("AGENT VAULT")).toBeInTheDocument();
     expect(screen.getByText(/Tap ☰ to open an application/)).toBeInTheDocument();
   });
 
@@ -38,9 +38,9 @@ describe("MobileShell", () => {
     await user.click(menuButton);
 
     // Should show app drawer with apps
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Users & Groups")).toBeInTheDocument();
-    expect(screen.getByText("Network")).toBeInTheDocument();
+    expect(screen.getByText("Browse")).toBeInTheDocument();
+    expect(screen.getByText("Wiki")).toBeInTheDocument();
+    expect(screen.getByText("Review")).toBeInTheDocument();
 
     // Menu button should now show X
     expect(menuButton).toHaveTextContent("✕");
@@ -53,16 +53,16 @@ describe("MobileShell", () => {
     // Open drawer
     const menuButton = screen.getByLabelText("Toggle app drawer");
     await user.click(menuButton);
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Browse")).toBeInTheDocument();
 
     // Click overlay to close
-    const overlay = screen.getByText("Dashboard").closest("div")?.previousElementSibling;
+    const overlay = screen.getByText("Browse").closest("div")?.previousElementSibling;
     if (overlay) {
       await user.click(overlay);
     }
 
     // Drawer should be closed
-    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
+    expect(screen.queryByText("Browse")).not.toBeInTheDocument();
   });
 
   it("does not show close button when no app is open", () => {
@@ -79,10 +79,10 @@ describe("MobileShell", () => {
     await user.click(menuButton);
 
     // Check for a sample of apps from different categories
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Users & Groups")).toBeInTheDocument();
-    expect(screen.getByText("Network")).toBeInTheDocument();
-    expect(screen.getByText("Security Center")).toBeInTheDocument();
-    expect(screen.getByText("System Settings")).toBeInTheDocument();
+    expect(screen.getByText("Browse")).toBeInTheDocument();
+    expect(screen.getByText("Wiki")).toBeInTheDocument();
+    expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.getByText("Vault")).toBeInTheDocument();
+    expect(screen.getByText("Credentials")).toBeInTheDocument();
   });
 });
