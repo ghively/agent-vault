@@ -1,3 +1,5 @@
+import { useWindows } from "./store/windows";
+
 export const FONT_UI = "'Space Grotesk', system-ui, -apple-system, sans-serif";
 export const FONT_MONO = "'JetBrains Mono', monospace";
 
@@ -38,8 +40,11 @@ function getCssVar(name: string, fallback: string): string {
   return value?.trim() || fallback;
 }
 
-// useTheme hook — provides C + spacing utilities (simplified for vault, no dynamic theme switching)
+// useTheme hook — reads active theme/density from store, provides C + spacing utilities
 export function useTheme() {
+  const theme = useWindows((s) => s.theme);
+  const density = useWindows((s) => s.density);
+
   // Build C object from CSS variables (falls back to dark literals for pixel-perfect dark)
   const CFromVars: Record<string, string> = {
     ground: getCssVar("ground", C.ground),
@@ -65,5 +70,5 @@ export function useTheme() {
     return 8 * n * scale;
   };
 
-  return { C: CFromVars, density: "comfortable" as Density, pad, theme: "dark" as Theme };
+  return { C: CFromVars, density, pad, theme };
 }
