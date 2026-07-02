@@ -1,4 +1,5 @@
 import { type AppId } from "../wm/apps";
+import { useWindows } from "../store/windows";
 import { Browse } from "./Browse";
 import { Wiki } from "./Wiki";
 import { Vault } from "./Vault";
@@ -12,14 +13,15 @@ interface ScreenRouterProps {
 }
 
 export function ScreenRouter({ app }: ScreenRouterProps) {
+  const openApp = useWindows((s) => s.openApp);
   switch (app) {
     case "browse":
       return <Browse />;
     case "wiki":
       return <Wiki />;
     case "vault":
-      // Vault expects onNavigate but we're in WM mode - stub it
-      return <Vault onNavigate={() => {}} />;
+      // Vault hub tiles navigate by opening the target app in its own window.
+      return <Vault onNavigate={(id) => openApp(id as AppId)} />;
     case "creds":
       return <Creds />;
     case "review":
