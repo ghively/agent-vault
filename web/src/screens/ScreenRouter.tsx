@@ -7,6 +7,7 @@ import { Creds } from "./Creds";
 import { Review } from "./Review";
 import { Pipeline } from "./Pipeline";
 import { CommandDeck } from "./CommandDeck";
+import { Settings } from "./Settings";
 
 interface ScreenRouterProps {
   app: AppId;
@@ -30,6 +31,8 @@ export function ScreenRouter({ app }: ScreenRouterProps) {
       return <Pipeline />;
     case "command":
       return <CommandDeck />;
+    case "settings":
+      return <Settings />;
     default:
       return null;
   }

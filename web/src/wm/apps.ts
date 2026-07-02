@@ -9,7 +9,8 @@ export type AppId =
   | "creds"
   | "review"
   | "pipeline"
-  | "command";
+  | "command"
+  | "settings";
 
 export interface AppDef {
   glyph: string; name: string; label: string; title: string;
@@ -53,10 +54,15 @@ export const APPS: Record<AppId, AppDef> = {
     desc: "command deck", color: "#8000ff",
     grad: "linear-gradient(145deg,#9020ff,#380080)", w: 1060, h: 660,
   },
+  settings: {
+    glyph: "⚙", name: "SETTINGS", label: "Settings", title: "vault · settings",
+    desc: "vault config & preferences", color: "#8a7dff",
+    grad: "linear-gradient(145deg,#9a8dff,#4a3fb0)", w: 940, h: 640,
+  },
 };
 
 export const APP_ORDER: AppId[] = [
-  "browse", "wiki", "vault", "creds", "review", "pipeline", "command",
+  "browse", "wiki", "vault", "creds", "review", "pipeline", "command", "settings",
 ];
 
 // Launcher grouping — all vault apps in a single group
@@ -68,7 +74,7 @@ export interface AppGroup {
 export const APP_GROUPS: AppGroup[] = [
   {
     label: "VAULT",
-    ids: ["browse", "wiki", "vault", "creds", "review", "pipeline", "command"],
+    ids: ["browse", "wiki", "vault", "creds", "review", "pipeline", "command", "settings"],
   },
 ];
 
@@ -80,4 +86,5 @@ export const ICON_FILE: Record<AppId, string> = {
   review: "review",
   pipeline: "pipeline",
   command: "command",
+  settings: "settings",
 };

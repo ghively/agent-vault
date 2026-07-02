@@ -16,6 +16,7 @@ from agent_vault.api import history
 from agent_vault.api import jobs
 from agent_vault.api import reads
 from agent_vault.api import review
+from agent_vault.api import settings as settings_api
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -48,6 +49,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(review.router, prefix="/api", dependencies=api_deps)
     app.include_router(jobs.router, prefix="/api", dependencies=api_deps)
     app.include_router(history.router, prefix="/api", dependencies=api_deps)
+    app.include_router(settings_api.router, prefix="/api", dependencies=api_deps)
 
     # Serve the built vault UI (web/dist) when present — open (no auth) so a
     # browser can load it; the UI's token gate handles /api authorization.
