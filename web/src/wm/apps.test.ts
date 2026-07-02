@@ -10,6 +10,7 @@ const VAULT_APP_IDS: AppId[] = [
   "review",
   "pipeline",
   "command",
+  "settings",
 ];
 
 test("all vault app ids are registered in APPS", () => {
@@ -62,7 +63,7 @@ test("launcher has exactly 1 group: VAULT", () => {
 test("VAULT group contains all vault apps", () => {
   const vaultGroup = APP_GROUPS.find((g) => g.label === "VAULT")!;
   expect(vaultGroup).toBeDefined();
-  expect(vaultGroup.ids).toHaveLength(7);
+  expect(vaultGroup.ids).toHaveLength(8);
   for (const id of VAULT_APP_IDS) {
     expect(vaultGroup.ids).toContain(id);
   }

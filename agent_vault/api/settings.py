@@ -76,7 +76,7 @@ async def get_settings_overview(s: Settings = Depends(get_settings)) -> dict[str
 
     prompt_contract_version = "unknown"
     try:
-        from agent_vault.compiler import PROMPT_CONTRACT_VERSION  # type: ignore[no-untyped-call]
+        from agent_vault.compiler import PROMPT_CONTRACT_VERSION
 
         prompt_contract_version = str(PROMPT_CONTRACT_VERSION)
     except Exception:
