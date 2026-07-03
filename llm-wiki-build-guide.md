@@ -4,6 +4,13 @@
 >
 > Harness-independent by design. Nothing here depends on Hermes, OpenClaw, cron, or any specific runtime. The contract is the files.
 
+> **This is a pre-implementation planning document** — the build order it describes is history now
+> (all stages shipped; see README.md's "Current state" section for what was actually built and
+> verified at each stage). Hermes/OpenClaw were candidate runners considered at design time; the
+> repo ships `cadences/*.sh` + `cadences/run_cadence.py` instead, runner-agnostic as intended. For
+> current, accurate operational docs use [`README.md`](./README.md), [`DOCS.md`](./DOCS.md),
+> [`AGENTS.md`](./AGENTS.md) — not this file.
+
 ---
 
 ## Part 1 — The Default Taxonomy (researched)

@@ -19,11 +19,11 @@ start=$(date +%s)
 # 1. Schema validation — capture (don't abort) so lint still runs on a broken
 #    vault (the lint report is exactly what the operator wants then).
 val_rc=0
-python3 validate.py . || val_rc=$?
+python3 -m agent_vault.validate . || val_rc=$?
 
 # 2. Lint pass. Read-only; report always stored for tooling.
 lint_rc=0
-python3 lint.py . --report discovery/_lint_report.json || lint_rc=$?
+python3 -m agent_vault.lint . --report discovery/_lint_report.json || lint_rc=$?
 
 rc=0
 [ "$lint_rc" -ne 0 ] && rc="$lint_rc"

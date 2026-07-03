@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-compiler.py â€” Stage 3. THE single LLM touchpoint.
+compiler.py — Stage 3. THE single LLM touchpoint.
 
 This is the only file in the system that talks to a language model. Everything
 else is deterministic. The compile pass turns `status: stub` entities (and any
@@ -33,8 +33,8 @@ Model selection precedence (highest first):
   built-in default "qwen2.5:7b-instruct"
 
 Trying a new model is a config change, not a code change:
-  $ OLLAMA_MODEL=llama3.1:8b python3 compiler.py .
-  $ python3 compiler.py --model phi4 .
+  $ OLLAMA_MODEL=llama3.1:8b python -m agent_vault.compiler .
+  $ python -m agent_vault.compiler --model phi4 .
 """
 import sys
 import os
@@ -74,7 +74,7 @@ PROMPT_CONTRACT_VERSION = "2.0"   # 1.1: deterministic source de-noise + total
                                   # 1.2: alias proposals carry a confidence field
                                   # (promote.py's `require_confidence: high` gate
                                   # for new_alias was unreachable without it).
-                                  # 1.3: `type` proposal kind â€” the spec's
+                                  # 1.3: `type` proposal kind — the spec's
                                   # self-expansion path (always human-gated by
                                   # the registry's `new_type: auto: false`).
                                   # 2.0: three NEW proposal kinds added to the
@@ -87,7 +87,7 @@ PROMPT_CONTRACT_VERSION = "2.0"   # 1.1: deterministic source de-noise + total
 # SYSTEM_PROMPT is intentionally a byte-stable module constant: Ollama/llama.cpp
 # amortize the KV cache for an identical leading `system` prompt across calls, so
 # the ~450-token system overhead is effectively free after the first entity.
-# Do NOT template it per-entity â€” that would defeat the server-side prefix cache.
+# Do NOT template it per-entity — that would defeat the server-side prefix cache.
 SYSTEM_PROMPT = """You are the compile pass of Agent Vault, a harness-independent file-based wiki.
 
 You are given one entity stub (its frontmatter + linked source materials) and
@@ -104,8 +104,8 @@ HARD RULES (violations corrupt the vault):
    `[NEEDS SOURCE: what specifically you would need]` inline in the prose.
 4. Prefer the vocabulary in <vocabulary>. Do NOT introduce new types,
    subtypes, or tags in your prose. If you believe one is warranted, emit
-   a structured proposal in the <proposals> block â€” never in the prose.
-5. Be concise. 1â€“3 short paragraphs total. The title and date fields are
+   a structured proposal in the <proposals> block — never in the prose.
+5. Be concise. 1–3 short paragraphs total. The title and date fields are
    already in the frontmatter; don't restate them mechanically. Synthesize.
 
 OUTPUT FORMAT (exactly this shape, nothing else):
@@ -128,7 +128,7 @@ OUTPUT FORMAT (exactly this shape, nothing else):
 If you have no proposals, output exactly: <proposals>[]</proposals>.
 Proposal evidence MUST quote or paraphrase a specific phrase from <sources>.
 A "type" proposal (a NEW top-level entity type) is a structural change and is
-always reviewed by a human â€” propose one ONLY when no existing type in
+always reviewed by a human — propose one ONLY when no existing type in
 <vocabulary> could reasonably hold this entity, and prefer a "subtype" or
 "reclassify" proposal whenever one fits.
 
@@ -167,7 +167,7 @@ paraphrased `evidence`. Every proposal still carries a `confidence` (0-1).
 
 # ----------------------------------------------------------------------------
 # Token-efficiency layer (deterministic, conservative). The LLM stays the smart
-# part; these helpers only feed it CLEANER, SMALLER input â€” never summarize, and
+# part; these helpers only feed it CLEANER, SMALLER input — never summarize, and
 # never drop a line that carries an extracted fact. (Karpathy-wiki ethos.)
 # ----------------------------------------------------------------------------
 PER_SOURCE_CHAR_CAP = int(os.environ.get("AGENT_VAULT_PER_SOURCE_CHARS", "4000"))
@@ -372,7 +372,7 @@ def render_user_prompt(stub_fm, sources, vocab):
 
 
 # ----------------------------------------------------------------------------
-# Response parsing â€” the trust boundary. We accept ONLY the prose between
+# Response parsing — the trust boundary. We accept ONLY the prose between
 # <prose>...</prose> and a JSON array between <proposals>...</proposals>.
 # Anything else the model said is silently dropped.
 # ----------------------------------------------------------------------------
@@ -418,7 +418,7 @@ def parse_response(text):
                     # the only thing dropped here.
                     proposals = [p for p in parsed if isinstance(p, dict) and "kind" in p]
             except json.JSONDecodeError:
-                # Surface rather than silently drop â€” a model emitting malformed
+                # Surface rather than silently drop — a model emitting malformed
                 # proposal JSON is a contract problem the operator should see.
                 print(f"warn: dropping malformed <proposals> JSON "
                       f"(first 120 chars: {body[:120]!r})", file=sys.stderr)
@@ -426,7 +426,7 @@ def parse_response(text):
 
 
 # ----------------------------------------------------------------------------
-# Compile clients â€” the swap edge. All must implement .compile(req) -> dict
+# Compile clients — the swap edge. All must implement .compile(req) -> dict
 # returning {"prose": str, "proposals": [...], "model": str, "raw": str}.
 # ----------------------------------------------------------------------------
 class CompileClient:
@@ -438,7 +438,7 @@ class CompileClient:
 
 class MockClient(CompileClient):
     """Deterministic, offline, no network. Produces template-based prose that
-    references frontmatter facts only â€” so the contract's no-invented-facts
+    references frontmatter facts only — so the contract's no-invented-facts
     rule is mechanically satisfied. Used for tests and as a fallback.
 
     Returns a prose body that:
@@ -485,7 +485,7 @@ class MockClient(CompileClient):
 
         lines.append("")
         lines.append("[NEEDS SOURCE: narrative detail beyond what frontmatter "
-                     "captures â€” the mock compiler intentionally does not "
+                     "captures — the mock compiler intentionally does not "
                      "synthesize claims from source text.]")
 
         prose = "\n".join(lines)
@@ -512,7 +512,7 @@ class OllamaClient(CompileClient):
     """POSTs to a local Ollama HTTP endpoint. Default host/model can be
     overridden via OLLAMA_HOST / OLLAMA_MODEL.
 
-    Why Ollama: matches the harness-independent ethos â€” the model runs on
+    Why Ollama: matches the harness-independent ethos — the model runs on
     your hardware, no cloud dependency, no household data leaving the LAN.
     Swap by setting AGENT_VAULT_COMPILER=mock or implementing another client.
     """
@@ -569,7 +569,7 @@ def get_client(model_override=None):
 
 
 # ----------------------------------------------------------------------------
-# Vault I/O â€” frontmatter + link block are READ ONLY here (we only mutate
+# Vault I/O — frontmatter + link block are READ ONLY here (we only mutate
 # `status` and `compiled_from_hash`); the prose body is rewritten wholesale.
 # ----------------------------------------------------------------------------
 FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
@@ -619,11 +619,11 @@ def update_status_fields(fm_text, new_status, compiled_from_hash):
     frontmatter field, including comments and ordering, is left untouched.
     This is the ONLY frontmatter mutation Stage 3 is allowed to make.
 
-    Raises if `status:` isn't found â€” silent no-op would be a false
+    Raises if `status:` isn't found — silent no-op would be a false
     idempotency that hides a malformed entity from the operator."""
     if not STATUS_LINE_RE.search(fm_text):
         raise RuntimeError("compile contract violation: no `status:` line "
-                           "found in frontmatter â€” refusing to write")
+                           "found in frontmatter — refusing to write")
     new_fm = STATUS_LINE_RE.sub(f"\\g<1>{new_status}", fm_text, count=1)
     if COMPILED_FROM_LINE_RE.search(new_fm):
         new_fm = COMPILED_FROM_LINE_RE.sub(
@@ -634,7 +634,7 @@ def update_status_fields(fm_text, new_status, compiled_from_hash):
 
 
 # ----------------------------------------------------------------------------
-# Driver â€” finds work, builds prompts, calls client, writes prose.
+# Driver — finds work, builds prompts, calls client, writes prose.
 # ----------------------------------------------------------------------------
 def load_vocabulary(vault):
     """Snapshot of the registry the compile pass is allowed to reference."""
@@ -652,7 +652,7 @@ def collect_source_materials(vault, fm):
     """Read each path in fm['sources'] and re-extract its text. Email
     attachments (path#fragment) reuse the parent .eml's extractor.
 
-    Importing ingest.py here is deliberate â€” the compile pass mustn't
+    Importing ingest.py here is deliberate — the compile pass mustn't
     invent its own extractors; the source-of-truth for "what text does
     Python see in this raw file" is the ingestion module."""
     sys.path.insert(0, vault)
@@ -769,7 +769,7 @@ def compile_one(vault, path, raw, fm_text, fm, client, vocab):
         result.get("proposals") or []
     )
 
-    # Preserve the link block verbatim â€” Python owns it; compile must never touch it.
+    # Preserve the link block verbatim — Python owns it; compile must never touch it.
     _fm_text, links_block, _old_prose = split_entity(raw)
     new_fm = update_status_fields(fm_text, "compiled",
                                   fm.get("sources_hash", ""))
@@ -808,7 +808,7 @@ def _compile_all_locked(vault, client=None, limit=None, only=None):
             r = compile_one(vault, path, raw, fm_text, fm, client, vocab)
         except Exception as e:
             # One malformed entity (e.g. frontmatter without a `status:` line)
-            # must not abort the whole pass â€” record it and move on.
+            # must not abort the whole pass — record it and move on.
             r = {"ok": False, "slug": fm.get("slug", os.path.basename(path)),
                  "error": f"{type(e).__name__}: {e}"}
         if r["ok"]:
@@ -872,7 +872,7 @@ def main():
           f"({summary['total_prompt_chars']} prompt chars; "
           f"denoise+budget trimmed {saved} source chars)")
     # Exit non-zero ONLY on total failure (nothing compiled but some failed),
-    # so a single per-entity timeout doesn't abort the weekly cadence â€” the
+    # so a single per-entity timeout doesn't abort the weekly cadence — the
     # entities that DID compile still get drained by the promote step.
     return 1 if (summary["failed"] and not summary["compiled"]) else 0
 

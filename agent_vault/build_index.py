@@ -6,7 +6,7 @@ Stage 1. Pure stdlib + pyyaml. No LLM, no network.
 This is what makes Agent Vault a pure lookup: every queryable field is pre-extracted here,
 so retrieval is "filter the index", never "reason over text".
 
-Usage:  python3 build_index.py [VAULT_DIR]   # defaults to current dir
+Usage:  python -m agent_vault.build_index [VAULT_DIR]   # defaults to current dir
 """
 import sys
 import os

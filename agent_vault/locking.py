@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-locking.py â€” one vault-wide advisory write lock.
+locking.py — one vault-wide advisory write lock.
 
 Every process that MUTATES the vault (ingest, compile, promote, reclassify,
 collections import) takes this exclusive lock so overlapping runs serialize
@@ -14,11 +14,11 @@ state. `os.replace` makes individual writes atomic, but multi-file sequences
 POSIX `fcntl.flock`, acquired with LOCK_NB + bounded retry (default 10 minutes,
 override via AGENT_VAULT_LOCK_TIMEOUT_S; 0 = wait forever). A bounded wait keeps an
 hourly cron `daily.sh` from silently piling up worker processes behind a hung
-weekly compile. On platforms without fcntl it degrades to a no-op â€” the
+weekly compile. On platforms without fcntl it degrades to a no-op — the
 realistic deployment is a single-host home NAS with sequential cadences, where
 the lock only matters when two runs accidentally overlap.
 
-A runtime flock failure (e.g. ENOLCK on some NFS mounts â€” plausible on a NAS)
+A runtime flock failure (e.g. ENOLCK on some NFS mounts — plausible on a NAS)
 is NOT silently swallowed: we warn loudly on stderr and proceed, so the
 operator learns the mutating passes are running unserialized.
 """
@@ -70,7 +70,7 @@ class vault_lock:
                     self.fh = None
                     raise LockTimeout(
                         f"could not acquire {self.path} within "
-                        f"{self.timeout_s:.0f}s â€” another mutating pass is "
+                        f"{self.timeout_s:.0f}s — another mutating pass is "
                         f"holding it (set AGENT_VAULT_LOCK_TIMEOUT_S to adjust)")
                 time.sleep(RETRY_INTERVAL_S)
             except OSError as e:
@@ -78,7 +78,7 @@ class vault_lock:
                 # merely contended. Proceeding unlocked is the documented
                 # best-effort posture, but it must never be silent.
                 print(f"warn: vault lock unavailable ({e}); proceeding "
-                      f"UNLOCKED â€” concurrent mutating runs will not "
+                      f"UNLOCKED — concurrent mutating runs will not "
                       f"serialize", file=sys.stderr)
                 return self
 

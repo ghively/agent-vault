@@ -4,6 +4,17 @@
 > Nothing in this document depends on a specific scheduler, agent framework, or model. It defines
 > *what the files look like and who is allowed to write to which part of them* — nothing else.
 
+> **This is a pre-implementation design document**, written before the code existed, and it isn't
+> kept in lockstep with the shipped implementation. For what's actually true of this repo today,
+> see [`README.md`](./README.md), [`DOCS.md`](./DOCS.md), [`AGENTS.md`](./AGENTS.md). Known drift
+> from this spec: the directory layout below is rooted at `wiki/` — the real repo has
+> `registry/`/`raw/`/`entities/`/`discovery/` at the **repo root** (no `wiki/` wrapper), alongside
+> `agent_vault/` (the actual Python package), `web/` (the frontend), and `docs/` (none of which
+> this spec anticipates). `discovery/` also holds `promoted.jsonl` (promotion's audit log) in
+> addition to `proposals.jsonl`. The credential example below uses an illustrative
+> `~/.config/wiki/age.key` path; the real seeded config (`registry/resolvers.yaml`) uses
+> `~/.config/agentvault/age.key`.
+
 ---
 
 ## 0. Design axioms (the non-negotiables)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-synapse â€” the retrieval layer. Pure Python, NO LLM, no network.
+synapse — the retrieval layer. Pure Python, NO LLM, no network.
 
 Reads _index.json (built by build_index.py) and answers questions by FILTERING,
 never by reasoning. This is the whole point: no model = no hallucination surface.
@@ -40,7 +40,7 @@ FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
 def load_index():
     p = os.path.join(VAULT, "_index.json")
     if not os.path.exists(p):
-        sys.exit("no _index.json â€” run build_index.py first")
+        sys.exit("no _index.json — run `python -m agent_vault.build_index` first")
     return json.load(open(p, encoding="utf-8"))["entities"]
 
 
@@ -99,7 +99,7 @@ def cmd_find(args, ents, aliases):
         print(f"no matches for '{q}'")
         return
     for e in hits:
-        print(f"  {e['slug']:30}  {e.get('type','')}/{e.get('subtype','')}  â€” {e.get('title','')}")
+        print(f"  {e['slug']:30}  {e.get('type','')}/{e.get('subtype','')}  — {e.get('title','')}")
     print(f"\n{len(hits)} match(es)")
 
 
@@ -194,7 +194,7 @@ def cmd_resolve(args, ents, aliases):
     """Resolve an entity's credential_ref to its plaintext secret, on demand.
 
     The secret is the ONLY thing written to stdout (so it pipes cleanly); all
-    human-facing context goes to stderr. Nothing is persisted â€” resolution is a
+    human-facing context goes to stderr. Nothing is persisted — resolution is a
     read of the external secret store, never a write back into the vault."""
     if not args:
         sys.exit("usage: synapse resolve <slug>")
@@ -227,7 +227,7 @@ def cmd_resolve(args, ents, aliases):
         sys.exit(1)
 
     sys.stderr.write(f"# {e.get('title', e['slug'])}  <-  {ref}\n")
-    sys.stderr.write("# secret below; never stored in the vault â€” handle with care\n")
+    sys.stderr.write("# secret below; never stored in the vault — handle with care\n")
     sys.stdout.write(secret + "\n")
 
 
@@ -252,7 +252,7 @@ def cmd_compact(args, ents, aliases):
         saved += d
         print(f"  {rel:32} {r['before']:6} -> {r['after']:6}  ({d} removed)")
     print(f"{'compacted' if apply else 'dry-run'}: {saved} record(s) "
-          f"{'removed (.bak written)' if apply else 'would be removed â€” pass --apply'}")
+          f"{'removed (.bak written)' if apply else 'would be removed — pass --apply'}")
 
 
 def _opt_days(args, default):

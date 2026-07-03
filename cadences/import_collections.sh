@@ -23,6 +23,6 @@ else
 fi
 
 cd "$VAULT"
-python3 collections_importer.py . "$@"
-python3 validate.py . >/dev/null
+python3 -m agent_vault.collections_importer . "$@"
+python3 -m agent_vault.validate . >/dev/null
 echo "import_collections: ok ($(date -u +%FT%TZ))"

@@ -2,10 +2,11 @@
 """
 cadences/run_cadence.py — cross-platform replacement for the .sh cadence wrappers.
 
-Sequences the existing vault scripts (ingest.py, compiler.py, promote.py,
-validate.py, lint.py) via subprocess so the pipeline runs on Windows as well
-as Linux, without requiring `sh`.  The .sh files are kept unchanged for the
-Linux appliance; this file is the Windows / server path.
+Sequences the agent_vault package's pipeline modules (agent_vault.ingest,
+agent_vault.compiler, agent_vault.promote, agent_vault.validate,
+agent_vault.lint) via `python -m` subprocess calls so the pipeline runs on
+Windows as well as Linux, without requiring `sh`.  The .sh files are kept
+unchanged for the Linux appliance; this file is the Windows / server path.
 
 Usage:
     python cadences/run_cadence.py <kind> [vault_dir]
@@ -26,7 +27,7 @@ import time
 from datetime import datetime, timezone
 
 # Force UTF-8 stdout/stderr so Unicode chars don't crash on Windows consoles
-# that default to cp1252.  Mirrors the idiom in ingest.py / compiler.py.
+# that default to cp1252.  Mirrors the idiom in agent_vault/ingest.py / compiler.py.
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8")
@@ -41,7 +42,8 @@ VALID_KINDS = {"daily", "weekly", "monthly"}
 def resolve_vault(vault_arg: str) -> str:
     """
     Return an absolute path to the vault root, validate it has registry/,
-    then os.chdir() into it so stage scripts can be invoked as 'ingest.py .'.
+    then os.chdir() into it so stage scripts can be invoked with '.' as the
+    vault dir (e.g. 'python -m agent_vault.ingest .').
     Prints to stderr and sys.exit(2) on any problem (matches _common.sh).
     """
     vault = os.path.abspath(vault_arg) if vault_arg else os.path.abspath(".")
@@ -55,24 +57,27 @@ def resolve_vault(vault_arg: str) -> str:
     return vault
 
 
-def run_stage(script: str, extra_args: list[str] | None = None) -> int:
+def run_stage(module: str, extra_args: list[str] | None = None) -> int:
     """
-    Run  sys.executable <script> .  (plus any extra_args) as a subprocess.
-    Inherits the full parent environment (so AGENT_VAULT_COMPILER / OLLAMA_*
-    are visible to the child, matching .sh behaviour).
+    Run  sys.executable -m agent_vault.<module> .  (plus any extra_args) as a
+    subprocess. Inherits the full parent environment (so AGENT_VAULT_COMPILER /
+    OLLAMA_* are visible to the child, matching .sh behaviour). Requires the
+    agent_vault package to be importable (installed via `pip install -e .`, or
+    cwd is the repo containing it) — the pipeline scripts live under
+    agent_vault/, not as bare files in the vault dir.
     Returns the exit code; never raises.
     """
-    cmd = [sys.executable, script, "."] + (extra_args or [])
+    cmd = [sys.executable, "-m", f"agent_vault.{module}", "."] + (extra_args or [])
     result = subprocess.run(cmd)
     return result.returncode
 
 
-def run_stage_suppress_stdout(script: str, extra_args: list[str] | None = None) -> int:
+def run_stage_suppress_stdout(module: str, extra_args: list[str] | None = None) -> int:
     """
-    Same as run_stage() but suppresses the child's stdout (validate.py .
+    Same as run_stage() but suppresses the child's stdout (agent_vault.validate
     can be chatty; the .sh cadences pipe it to /dev/null).
     """
-    cmd = [sys.executable, script, "."] + (extra_args or [])
+    cmd = [sys.executable, "-m", f"agent_vault.{module}", "."] + (extra_args or [])
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL)
     return result.returncode
 
@@ -115,19 +120,19 @@ def record_run(kind: str, rc: int, duration_s: int, detail: str) -> None:
 def run_daily() -> tuple[int, str]:
     """
     Cheap, no-LLM cadence.
-    1. ingest.py .
-    2. validate.py . (stdout suppressed)
+    1. agent_vault.ingest .
+    2. agent_vault.validate . (stdout suppressed)
     rc = last failing stage's rc; detail accumulates failures.
     """
     rc = 0
     detail = ""
 
-    stage_rc = run_stage("ingest.py")
+    stage_rc = run_stage("ingest")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" ingest(rc={stage_rc})"
 
-    stage_rc = run_stage_suppress_stdout("validate.py")
+    stage_rc = run_stage_suppress_stdout("validate")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" validate(rc={stage_rc})"
@@ -138,31 +143,31 @@ def run_daily() -> tuple[int, str]:
 def run_weekly() -> tuple[int, str]:
     """
     LLM touchpoint cadence.
-    1. ingest.py .
-    2. compiler.py .
-    3. promote.py .
-    4. validate.py . (stdout suppressed)
+    1. agent_vault.ingest .
+    2. agent_vault.compiler .
+    3. agent_vault.promote .
+    4. agent_vault.validate . (stdout suppressed)
     Every step runs regardless of earlier failures; rc = last failing step.
     """
     rc = 0
     detail = ""
 
-    stage_rc = run_stage("ingest.py")
+    stage_rc = run_stage("ingest")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" ingest(rc={stage_rc})"
 
-    stage_rc = run_stage("compiler.py")
+    stage_rc = run_stage("compiler")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" compile(rc={stage_rc})"
 
-    stage_rc = run_stage("promote.py")
+    stage_rc = run_stage("promote")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" promote(rc={stage_rc})"
 
-    stage_rc = run_stage_suppress_stdout("validate.py")
+    stage_rc = run_stage_suppress_stdout("validate")
     if stage_rc != 0:
         rc = stage_rc
         detail += f" validate(rc={stage_rc})"
@@ -173,13 +178,13 @@ def run_weekly() -> tuple[int, str]:
 def run_monthly() -> tuple[int, str]:
     """
     Read-only audit cadence.
-    1. validate.py .       — capture rc, don't abort
-    2. lint.py . --report discovery/_lint_report.json — capture rc
+    1. agent_vault.validate .       — capture rc, don't abort
+    2. agent_vault.lint . --report discovery/_lint_report.json — capture rc
     rc: lint_rc set first, then validate overrides (validate outranks lint).
     """
-    val_rc = run_stage("validate.py")
+    val_rc = run_stage("validate")
     lint_rc = run_stage(
-        "lint.py", extra_args=["--report", "discovery/_lint_report.json"]
+        "lint", extra_args=["--report", "discovery/_lint_report.json"]
     )
 
     # validate outranks lint (mirrors: [ "$val_rc" -ne 0 ] && rc="$val_rc")

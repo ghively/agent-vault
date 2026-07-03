@@ -26,8 +26,8 @@ What it must NEVER write:
   - `registry/resolvers.yaml` or `_entity-template.md` (human only)
   - the prose body of anything
 
-Usage:  python3 promote.py [VAULT_DIR]   (defaults to current dir)
-        python3 promote.py . --dry-run   (show what would happen, write nothing)
+Usage:  python -m agent_vault.promote [VAULT_DIR]   (defaults to current dir)
+        python -m agent_vault.promote . --dry-run   (show what would happen, write nothing)
 """
 import sys
 import os

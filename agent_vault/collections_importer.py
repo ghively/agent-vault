@@ -22,8 +22,8 @@ What it understands today (no external network calls; just parses exports):
 Idempotent: re-importing the same export does nothing (slug-level merge).
 
 Usage:
-  python3 collections_importer.py [VAULT] --source raw/collections/steam.csv
-  python3 collections_importer.py [VAULT] --source raw/collections/  # walk dir
+  python -m agent_vault.collections_importer [VAULT] --source raw/collections/steam.csv
+  python -m agent_vault.collections_importer [VAULT] --source raw/collections/  # walk dir
 """
 import sys
 import os
