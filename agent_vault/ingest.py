@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ingest.py â€” Stage 2. Walk raw/, classify deterministically, write entity stubs.
+ingest.py — Stage 2. Walk raw/, classify deterministically, write entity stubs.
 
 NO LLM. NO NETWORK. Pure Python.
 
@@ -19,7 +19,7 @@ A low-confidence classification still produces a findable stub, flagged
 `status: needs-review` so a human can correct it before the compile pass.
 
 Usage:
-    python3 ingest.py [VAULT_DIR]
+    python -m agent_vault.ingest [VAULT_DIR]
 """
 import sys
 import os
@@ -51,7 +51,7 @@ except Exception:
         return nullcontext()
 
 try:
-    import secret_scan          # spec Â§7 write-side guard; shipped alongside
+    import secret_scan          # spec §7 write-side guard; shipped alongside
 except ImportError:             # degrade to no-op if somehow absent
     secret_scan = None
 
@@ -67,7 +67,7 @@ UNKNOWN_BELOW = 0.40
 # retried every run; raise the cap or split the file to ingest it.
 MAX_RAW_BYTES = int(os.environ.get("AGENT_VAULT_MAX_RAW_MB", "50")) * 1024 * 1024
 # Cap decompressed Office-XML to defuse zip bombs (a small .docx/.xlsx can
-# inflate to GBs). Cap the classification haystack â€” signals live in the header /
+# inflate to GBs). Cap the classification haystack — signals live in the header /
 # first page, so scanning megabytes against ~100 billers is wasted work.
 MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024
 MAX_HAYSTACK_CHARS = 65536
@@ -79,7 +79,7 @@ MAX_EMAIL_ATTACHMENTS = 50
 def missing_extractors():
     """Return the list of optional libraries that aren't importable. Without
     them ingestion still runs, but PDFs/images yield no text and fall back to
-    file-type priors â€” so a vault that should classify richly will instead
+    file-type priors — so a vault that should classify richly will instead
     pile up in `unknown`. We surface this once at the top of a run rather than
     letting the operator wonder why every statement landed in needs-review."""
     missing = []
@@ -102,7 +102,7 @@ def warn_missing_extractors():
     missing = missing_extractors()
     if not missing:
         return
-    print("warn: optional extractors unavailable â€” classification will be "
+    print("warn: optional extractors unavailable — classification will be "
           "degraded (text-less sources fall through to `unknown`):",
           file=sys.stderr)
     for lib, what in missing:
@@ -171,7 +171,7 @@ def extract_text(path):
 def extract_email(path):
     """Parse an .eml. Returns the message body text, headers, and any attachments.
 
-    Attachments are kept in-memory as (filename, content_type, bytes) â€” they
+    Attachments are kept in-memory as (filename, content_type, bytes) — they
     are NOT written back to raw/. Each becomes its own logical sub-subject
     referenced as path#fragment.
     """
@@ -334,7 +334,7 @@ def extract_xlsx(path):
 
 
 class _HTMLTextExtractor:
-    """Minimal stdlib HTMLâ†’text: drop script/style, keep visible text."""
+    """Minimal stdlib HTML→text: drop script/style, keep visible text."""
     def __init__(self):
         from html.parser import HTMLParser
 
@@ -522,7 +522,7 @@ def _apply_learned_parse(raw, parse_type):
 
 def sources_hash(paths):
     """Stable, short identifier for a set of source paths. Changes when the
-    source set changes â€” that's the signal the compile pass uses to recompile.
+    source set changes — that's the signal the compile pass uses to recompile.
     Path-based (not content-based) so it survives appending a new source even
     when other source files aren't available locally."""
     joined = "\n".join(sorted(paths))
@@ -538,7 +538,7 @@ def classify(text, meta, kind, filename, patterns):
         tags (list to seed frontmatter).
     """
     # Cap the haystack: classification signals are in the header / first page,
-    # and scanning megabytes against ~100 billers Ã— shapes is wasted work.
+    # and scanning megabytes against ~100 billers × shapes is wasted work.
     hay = ((text or "")[:MAX_HAYSTACK_CHARS] + " " + filename).lower()
     headers = (meta.get("headers") or {})
     hay += " " + " ".join(str(v).lower() for v in headers.values())
@@ -573,7 +573,7 @@ def classify(text, meta, kind, filename, patterns):
             # Biller name in document-ish text without a recognized shape:
             # guess document/statement, but penalize enough that it lands in
             # needs-review unless something else corroborates. For photos we
-            # KEEP the media prior â€” a JPEG that mentions a brand isn't
+            # KEEP the media prior — a JPEG that mentions a brand isn't
             # automatically a statement.
             result["type"] = result["type"] or "document"
             result["subtype"] = result["subtype"] or "statement"
@@ -643,10 +643,10 @@ ORDER_RE = re.compile(r"order\s*(?:number|no\.?)?\s*[#:]+\s*([A-Z0-9][A-Z0-9-]{5
 POLICY_RE = re.compile(r"policy\s*(?:number|#)?:?\s*([\d-]{6,})", re.I)
 PARCEL_RE = re.compile(r"parcel\s*id:?\s*([\d\w.-]{4,})", re.I)
 VIN_RE = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
-# last4 only â€” a masked tail or "ending in NNNN". NEVER captures a full account/PAN.
+# last4 only — a masked tail or "ending in NNNN". NEVER captures a full account/PAN.
 # The mask run is BOUNDED ({2,12}); an unbounded `{3,}` over a permissive class
 # before a required `\d{4}` backtracks catastrophically (ReDoS) on long x-runs.
-LAST4_RE = re.compile(r"(?:ending(?:\s+in)?\s*|[*xXâ€¢]{2,12}\s?)(\d{4})\b", re.I)
+LAST4_RE = re.compile(r"(?:ending(?:\s+in)?\s*|[*xX•]{2,12}\s?)(\d{4})\b", re.I)
 SERIAL_RE = re.compile(r"serial\s*(?:number|no\.?|#)?\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{4,})", re.I)
 MODEL_RE = re.compile(r"model\s*(?:number|no\.?|#)?\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{2,20})", re.I)
 
@@ -760,7 +760,7 @@ def make_slug(biller_id, classification, fields, filename, kind):
     Strategy: a slug only gets a biller+shape prefix if there's a temporal/ID
     anchor that disambiguates it (period, due/expires/renews date, or an
     order_id). Without that anchor we'd get collisions like every-receipt
-    landing on the same slug, so we fall back to the filename stem instead â€”
+    landing on the same slug, so we fall back to the filename stem instead —
     classification info still lives in `type`/`subtype`.
 
     Preference order:
@@ -875,7 +875,7 @@ def _yaml_str(s):
     flags leading-special chars (-, ?, !, %, &, *, |, >, @, `), special interior
     chars (:, #, [, ], {, }), and surrounding whitespace; falls back to JSON
     quoting so embedded quotes/backslashes are escaped properly. Aligned with
-    collections_importer._yaml_quote â€” same rules in both writers."""
+    collections_importer._yaml_quote — same rules in both writers."""
     s = str(s)
     if s == "":
         return '""'
@@ -924,7 +924,7 @@ def resolve_stub_path(vault, stub, reserved=None):
             except yaml.YAMLError:
                 parsed = None
         if parsed is None:
-            # Existing file is unparseable â€” it may be a hand-edited entity with
+            # Existing file is unparseable — it may be a hand-edited entity with
             # real prose. NEVER clobber something we can't read; disambiguate.
             stub["slug"] = _disambiguate_slug(d, stub["slug"], reserved)
             path = os.path.join(d, f"{stub['slug']}.md")
@@ -1300,7 +1300,7 @@ def auto_stub_missing_refs(vault):
     created = []
     # Iterate in sorted order so two ingest runs over the same input set
     # produce byte-identical inferred stubs (deterministic). Also: reject
-    # refs whose slug part isn't valid â€” they'd produce filenames that
+    # refs whose slug part isn't valid — they'd produce filenames that
     # validate.py would then immediately flag as a self-induced lint storm.
     for ref in sorted(refs):
         referrers = refs[ref]
@@ -1352,7 +1352,7 @@ def ingest(vault):
 
 def load_gated_types(vault):
     """Types flagged `human_gated: true` in the schema: new INSTANCES need
-    human approval before they're treated as real (spec Â§3)."""
+    human approval before they're treated as real (spec §3)."""
     try:
         schema = yaml.safe_load(open(os.path.join(vault, "registry", "schema.yaml"),
                                      encoding="utf-8")) or {}
@@ -1363,15 +1363,15 @@ def load_gated_types(vault):
 
 
 def enforce_human_gate(stub, gated_types):
-    """spec Â§3 enforcement: a stub of a human_gated type can never enter the
-    vault as a confident `stub` â€” it lands as `needs-review` (which the
-    compile pass skips) until a human approves it (review.py approve-entity
+    """spec §3 enforcement: a stub of a human_gated type can never enter the
+    vault as a confident `stub` — it lands as `needs-review` (which the
+    compile pass skips) until a human approves it (review approve-entity
     flips it to `stub`). Mutates and returns the stub."""
     if stub.get("type") in gated_types and stub.get("status") == "stub":
         stub["status"] = "needs-review"
         notes = stub.setdefault("notes", {})
         notes["gated"] = (f"type '{stub['type']}' is human_gated; awaiting "
-                          f"approval (review.py approve-entity)")
+                          f"approval (python -m agent_vault.review . approve-entity)")
     return stub
 
 
@@ -1509,7 +1509,7 @@ def _ingest_one_file(vault, path, rel, h, kind_today, patterns, summary,
         # Back-reference: when this stub points to an existing entity
         # (e.g. account/bofa-checking), append our raw path + add a
         # `related:` back-link to that entity. Sibling stubs we just
-        # created in this same run are skipped â€” they were built above.
+        # created in this same run are skipped — they were built above.
         sibling_refs = {f"{s['type']}/{s['slug']}" for _, s in stubs}
         for ref in stub.get("related") or []:
             if ref in sibling_refs:
@@ -1573,7 +1573,7 @@ def _extract_inmemory(data, kind):
 
 def build_stub(subject, classification, fields):
     """Compose a stub dict from one subject + its classification.
-    sources_hash is left empty here â€” the caller stamps it after any
+    sources_hash is left empty here — the caller stamps it after any
     cross-link mutations to `related`/`sources` are settled."""
     conf = classification["confidence"]
     status = ("stub" if conf >= NEEDS_REVIEW_BELOW
@@ -1585,10 +1585,10 @@ def build_stub(subject, classification, fields):
                      subject["name"], subject["kind"])
     title = _make_title(classification, fields, subject)
 
-    # spec Â§7 (write-side): if the source text carries secret-shaped strings,
+    # spec §7 (write-side): if the source text carries secret-shaped strings,
     # downgrade a confident stub to needs-review so a human vets it before the
     # compile/surface step, and defensively redact the (Python-written) title.
-    # The secret value itself is NEVER recorded â€” only its category + count.
+    # The secret value itself is NEVER recorded — only its category + count.
     secret_findings = secret_scan.scan(subject.get("text", "")) if secret_scan else []
     if secret_findings:
         if status == "stub":
@@ -1656,7 +1656,7 @@ def _make_title(classification, fields, subject):
     if biller: pieces.append(biller.upper() if len(biller) <= 4 else biller.title())
     if shape:  pieces.append(shape.replace("-", " ").title())
     # When the biller fires but no shape did, the title would be just the
-    # biller name â€” add the filename stem so the entity is identifiable.
+    # biller name — add the filename stem so the entity is identifiable.
     if biller and not shape:
         stem = os.path.splitext(os.path.basename(subject["name"].split("#")[-1]))[0]
         pieces.append(stem.replace("-", " ").title())
@@ -1664,7 +1664,7 @@ def _make_title(classification, fields, subject):
         stem = os.path.splitext(os.path.basename(subject["name"].split("#")[-1]))[0]
         pieces.append(stem.replace("-", " ").title())
     if when: pieces.append(when)
-    return " â€” ".join(pieces)
+    return " — ".join(pieces)
 
 
 def refresh_index(vault):
@@ -1709,7 +1709,7 @@ def main():
         for t, slug in s["inferred"]:
             print(f"    needs-review  {t}/{slug}")
     if s.get("errors"):
-        print(f"\n  errors ({len(s['errors'])}) â€” recorded in raw/_manifest.jsonl, "
+        print(f"\n  errors ({len(s['errors'])}) — recorded in raw/_manifest.jsonl, "
               "will not be retried:", file=sys.stderr)
         for rel, err in s["errors"]:
             print(f"    {rel}: {err}", file=sys.stderr)

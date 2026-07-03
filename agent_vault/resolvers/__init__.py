@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-resolvers â€” credential resolution (spec Â§7).
+resolvers — credential resolution (spec §7).
 
 A `credential_ref` is a URI:  scheme://store/path
     e.g.  age://infra/synology-ssh
@@ -15,7 +15,7 @@ The scheme names a *resolver*. Resolvers are pluggable backends declared in
 This package is the dispatcher. It parses a ref, looks up the backend for the
 scheme in resolvers.yaml, imports the named module, and calls it.
 
-CONTRACT (spec Â§7, never bends):
+CONTRACT (spec §7, never bends):
   - The vault stores only the REFERENCE. A plaintext secret never sits in a file.
   - Resolution happens here, ON DEMAND, at query time.
   - Resolved plaintext is NEVER written back to disk or the index. This package
@@ -35,11 +35,11 @@ __all__ = ["Ref", "ResolverError", "parse_ref", "load_config", "resolve", "safe_
 
 def safe_stderr(stderr_bytes, limit=200):
     """Sanitize a child CLI's stderr for inclusion in an error message: collapse
-    whitespace/newlines and truncate. Child stderr is untrusted â€” a verbose tool
-    could echo item names, URIs, or partial material â€” so bound the exposure."""
+    whitespace/newlines and truncate. Child stderr is untrusted — a verbose tool
+    could echo item names, URIs, or partial material — so bound the exposure."""
     s = (stderr_bytes or b"").decode("utf-8", "replace")
     s = " ".join(s.split())
-    return (s[:limit] + "â€¦") if len(s) > limit else s
+    return (s[:limit] + "…") if len(s) > limit else s
 
 
 class ResolverError(Exception):
@@ -58,7 +58,7 @@ def parse_ref(ref):
     Rejects anything that isn't a well-formed ref, and rejects path segments
     that could escape a backend's store (``.``/``..``/empty) so a malicious or
     buggy ref can't traverse out of `store_dir`. Backends MUST still do their
-    own containment check â€” this is defense in depth, not the only line."""
+    own containment check — this is defense in depth, not the only line."""
     if not isinstance(ref, str) or "://" not in ref:
         raise ResolverError(
             f"malformed credential_ref {ref!r}: expected scheme://store/path")
@@ -79,7 +79,7 @@ def parse_ref(ref):
                 f"credential_ref {ref!r} contains a path-traversal segment")
         # Reject leading-dash segments: backends pass these as positional argv to
         # CLIs (op/bw/pass/vault/secret-tool/security), where a leading '-' is
-        # parsed as a FLAG â€” argument injection. (Backends also add `--` where
+        # parsed as a FLAG — argument injection. (Backends also add `--` where
         # supported; this is the central guard.)
         if seg.startswith("-"):
             raise ResolverError(
@@ -125,7 +125,7 @@ def resolve(ref, vault=".", config=None):
     `config` (the parsed resolvers.yaml mapping) may be injected for testing;
     otherwise it's read from the vault. Returns the secret string. Raises
     ResolverError on any failure. The returned value is the ONLY place the
-    plaintext exists â€” do not persist it.
+    plaintext exists — do not persist it.
     """
     parsed = parse_ref(ref)
     cfg = config if config is not None else load_config(vault)

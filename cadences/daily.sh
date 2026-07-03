@@ -18,10 +18,10 @@ rc=0
 detail=""
 
 # 1. Ingest new raw/ files into stubs. Idempotent via raw/_manifest.jsonl.
-python3 ingest.py . || { rc=$?; detail="$detail ingest(rc=$rc)"; }
+python3 -m agent_vault.ingest . || { rc=$?; detail="$detail ingest(rc=$rc)"; }
 
 # 2. Validate. Cheap, and catches a corrupt write before it spreads.
-python3 validate.py . >/dev/null || { rc=$?; detail="$detail validate(rc=$rc)"; }
+python3 -m agent_vault.validate . >/dev/null || { rc=$?; detail="$detail validate(rc=$rc)"; }
 
 record_run daily "$rc" "$(( $(date +%s) - start ))" "${detail:-ok}"
 if [ "$rc" -eq 0 ]; then

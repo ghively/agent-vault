@@ -17,10 +17,10 @@ Writes NOTHING (besides the optional report file). Cron-friendly: print
 nothing if the vault is clean, print a structured summary if it isn't.
 
 Usage:
-    python3 lint.py [VAULT]              # human summary to stdout
-    python3 lint.py [VAULT] --json       # JSON to stdout instead
-    python3 lint.py [VAULT] --report PATH  # also write JSON to PATH
-    python3 lint.py [VAULT] --aging-days 30  # override default 14-day aging
+    python -m agent_vault.lint [VAULT]              # human summary to stdout
+    python -m agent_vault.lint [VAULT] --json       # JSON to stdout instead
+    python -m agent_vault.lint [VAULT] --report PATH  # also write JSON to PATH
+    python -m agent_vault.lint [VAULT] --aging-days 30  # override default 14-day aging
 """
 import sys
 import os

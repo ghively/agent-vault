@@ -38,7 +38,7 @@ two-phase-commit apply step) rather than duplicating its recovery logic.
 Ownership stays intact: a human DECIDES here; deterministic code writes.
 
 Usage:
-  python3 review.py [VAULT] <command> [args]
+  python -m agent_vault.review [VAULT] <command> [args]
 """
 import sys
 import os
@@ -143,7 +143,7 @@ def cmd_list(vault):
         reason = (rec.get("reason") or "")[:60]
         print(f"  {sid}  {rec.get('kind',''):10}  {concept:36}  "
               f"{rec.get('sightings', 0):>5}  {reason}")
-    print("\n  approve with:  python3 review.py . approve <id>")
+    print("\n  approve with:  python -m agent_vault.review . approve <id>")
     return 0
 
 
@@ -329,7 +329,7 @@ def cmd_entities(vault):
         print(f"  {e['ref']:48}  conf={fm.get('confidence', '?')}  "
               f"created={fm.get('created','?')}{flag_s}")
         print(f"      {fm.get('title','')}")
-    print("\n  approve with:  python3 review.py . approve-entity <type/slug>")
+    print("\n  approve with:  python -m agent_vault.review . approve-entity <type/slug>")
     return 0
 
 

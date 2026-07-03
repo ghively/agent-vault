@@ -6,7 +6,7 @@ Stage 0 deliverable. Also the smoke-test reused by every later stage.
 Pure stdlib + pyyaml. No LLM, no network.
 
 Usage:
-    python3 validate.py [VAULT_DIR]      # defaults to current dir
+    python -m agent_vault.validate [VAULT_DIR]      # defaults to current dir
 Exit code 0 = all valid, 1 = problems found.
 """
 import sys

@@ -22,9 +22,9 @@ What it does for each queued reclassify in discovery/promoted.jsonl:
      is a no-op.
 
 Usage:
-  python3 reclassify_apply.py [VAULT]              # apply all queued
-  python3 reclassify_apply.py [VAULT] --slug X     # apply only entity X
-  python3 reclassify_apply.py [VAULT] --dry-run    # show plan, write nothing
+  python -m agent_vault.reclassify_apply [VAULT]              # apply all queued
+  python -m agent_vault.reclassify_apply [VAULT] --slug X     # apply only entity X
+  python -m agent_vault.reclassify_apply [VAULT] --dry-run    # show plan, write nothing
 """
 import sys
 import os

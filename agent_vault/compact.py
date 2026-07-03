@@ -18,8 +18,8 @@ Each compaction writes a `<log>.bak` snapshot first, then rewrites atomically
 by the readers). Dry-run by default.
 
 Usage:
-    python3 compact.py [VAULT_DIR]            # report only (no writes)
-    python3 compact.py [VAULT_DIR] --apply    # compact in place (+ .bak backups)
+    python -m agent_vault.compact [VAULT_DIR]            # report only (no writes)
+    python -m agent_vault.compact [VAULT_DIR] --apply    # compact in place (+ .bak backups)
 """
 import sys
 import os

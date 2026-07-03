@@ -1,17 +1,21 @@
-# Agent Vault â€” Full Documentation
+# Agent Vault — Full Documentation
 
 This document explains, in plain terms, **what Agent Vault is, what is actually
 built versus scaffolded, how the pieces fit together, and how to run it on your
 own files.**
 
 It is the practical companion to the two design documents:
-- [`llm-wiki-schema-spec.md`](./llm-wiki-schema-spec.md) â€” the "constitution": file
+- [`llm-wiki-schema-spec.md`](./llm-wiki-schema-spec.md) — the "constitution": file
   format and ownership rules.
-- [`llm-wiki-build-guide.md`](./llm-wiki-build-guide.md) â€” the taxonomy and the
+- [`llm-wiki-build-guide.md`](./llm-wiki-build-guide.md) — the taxonomy and the
   intended build order.
 
-If you read nothing else, read [Â§1](#1-what-it-is) and
-[Â§2 Implementation status](#2-implementation-status-real-vs-scaffolding).
+This doc covers the CLI/pipeline (the vault's core). Two more docs cover the
+other two tiers in depth: [`docs/API.md`](./docs/API.md) for the FastAPI HTTP
+service, and [`web/README.md`](./web/README.md) for the React desktop UI.
+
+If you read nothing else, read [§1](#1-what-it-is) and
+[§2 Implementation status](#2-implementation-status-real-vs-scaffolding).
 
 ---
 
@@ -19,37 +23,41 @@ If you read nothing else, read [Â§1](#1-what-it-is) and
 
 You have a NAS (a drive on your home network) full of accumulated files: bank
 statements, utility bills, appliance manuals, warranties, insurance policies,
-tax documents, photos, exported emails. It is a junk drawer â€” unsearchable, and
+tax documents, photos, exported emails. It is a junk drawer — unsearchable, and
 you no longer remember what's in it.
 
 **Agent Vault reads that pile and turns it into an organized, searchable
 notebook about your household.** It produces one Markdown page per real-world
-thing â€” your furnace, your checking account, your car â€” each carrying the facts
+thing — your furnace, your checking account, your car — each carrying the facts
 that matter (when a warranty expires, when a bill is due, an account's last 4
 digits) and cross-linked to the documents that prove them.
 
 Then you ask it questions instead of digging:
 
 ```
-synapse find furnace            # fuzzy search
-synapse show bofa               # full record for one entity
-synapse expiring --days 90      # warranties / renewals lapsing soon
-synapse due                     # bills / tasks coming due
-synapse creds bofa              # the credential REFERENCE (not the secret)
-synapse list account            # everything of one type
+agent-vault find furnace            # fuzzy search
+agent-vault show bofa               # full record for one entity
+agent-vault expiring --days 90      # warranties / renewals lapsing soon
+agent-vault due                     # bills / tasks coming due
+agent-vault creds bofa              # the credential REFERENCE (not the secret)
+agent-vault list account            # everything of one type
 ```
+
+(`agent-vault` is the installed console script; it's built from
+`agent_vault/synapse.py`, historically called "synapse" in this repo's design
+docs and diagrams — the two names refer to the same retrieval CLI.)
 
 ### The one design choice that matters
 
-Almost the entire system is **deterministic, predictable Python â€” no AI.** A
+Almost the entire system is **deterministic, predictable Python — no AI.** A
 language model is allowed exactly **one** job: writing the short human-readable
 summary paragraph on each page. It may **never** decide how things are filed,
 change a date, or edit the vocabulary. This is deliberate: LLMs hallucinate, so
 the model is boxed into "prose only," and every fact you query comes from the
 actual document, not from a model's guess.
 
-This is enforced by an **ownership model** â€” three authors, each owning a strict
-slice of every file (see [Â§4](#4-the-data-contract)).
+This is enforced by an **ownership model** — three authors, each owning a strict
+slice of every file (see [§4](#4-the-data-contract)).
 
 ---
 
@@ -57,32 +65,31 @@ slice of every file (see [Â§4](#4-the-data-contract)).
 
 The *machine* is real and tested. The *contents* shipped in this repo are
 samples. The *AI step* needs an external server you provide. And one advertised
-feature â€” credential resolution â€” is described but not built.
+feature — credential resolution — is described but not built.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `ingest.py` â€” read/sort files â†’ entity stubs | âœ… **Real, working** | Rich classification needs optional libs (`pdfplumber`, `Pillow`, `python-magic`). Without them it still runs but text-less files fall to `unknown` (you now get a stderr warning). |
-| `build_index.py` â€” build the search index | âœ… **Real, working** | Only needs `pyyaml`. |
-| `synapse.py` â€” the query CLI | âœ… **Real, working** | Pure lookup over the index. |
-| `compiler.py` â€” **MockClient** | âœ… **Real, working** | Deterministic, offline, no network. Used by all tests/CI. |
-| `compiler.py` â€” **OllamaClient** (the real AI) | âš™ï¸ **Real code, external dependency** | Calls an [Ollama](https://ollama.com) server over HTTP. You must run that server yourself; nothing is bundled. Not exercised in this repo's tests. |
-| `promote.py` â€” learn vocabulary from proposals | âœ… **Real, working** | Atomic, locked, idempotent. |
-| `reclassify_apply.py` â€” apply approved re-filings | âœ… **Real, working** | Two-phase, crash-recoverable. |
-| `lint.py` â€” anomaly report | âœ… **Real, working** | Read-only. |
-| `collections_importer.py` â€” Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV | âœ… **Real, working** | Bookkeeping import. |
-| `validate.py` â€” schema gate | âœ… **Real, working** | The smoke test every stage reuses. |
-| `cadences/*.sh` â€” daily/weekly/monthly wrappers | âœ… **Real, working** | Plain POSIX `sh`; wire to any runner. |
-| **Credential resolution** (turn a `creds` ref into the actual secret) | âœ… **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `synapse resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
-| **File extractors** (turn documents into text) | âœ… **Real, working** | PDF, email (+attachments), JPEG/PNG (EXIF), text/CSV, **and now `.docx` / `.xlsx` / `.html`** (pure stdlib). Each degrades to empty text on error, never crashes. |
-| **Compile token efficiency** (contract 1.1) | âœ… **Real, working** | Source text is deterministically de-noised + budgeted before the LLM sees it; a fact-bearing line is never dropped; per-entity + aggregate token logging. The LLM still sees all real content. |
-| **Write-side secret guard** (keep secrets out of the vault) | âœ… **Real, working** | `secret_scan.py`: ingestion scans each source for secret-shaped strings and downgrades the stub to `needs-review` (never recording the secret); `validate.py` hard-fails any entity with a real credential in a frontmatter field. Two strictness tiers keep false positives out of the schema gate. |
-| The 3 files under `entities/` | ðŸŽ­ **Sample data** | Hand-written demos (furnace, BofA checking, furnace warranty). Not your data. |
-| `tests/fixtures/` (~25 files) | ðŸŽ­ **Synthetic test data** | Fake statements, photos, emails generated to prove the pipeline. |
-| `raw/*` folders | ðŸ“­ **Empty** | Only `.gitkeep` placeholders. This is where *your* documents go. |
-| `discovery/`, `raw/collections/` | ðŸ“­ **Created on demand** | Do not exist until a run produces them. |
-| `registry/schema.yaml` (taxonomy) | âœ… **Real, lightly seeded** | The 12-type taxonomy is complete; `tags:` has a handful of seed entries. |
-| `registry/patterns.yaml` (classifier vocabulary) | âœ… **Real, small** | ~13 billers + ~12 shapes. Designed to grow as you meet real vendors. |
-| `registry/aliases.yaml` | âœ… **Real, tiny** | 2 seed aliases. Grows via `promote.py`. |
+| `ingest.py` — read/sort files → entity stubs | ✅ **Real, working** | Rich classification needs optional libs (`pdfplumber`, `Pillow`, `python-magic`). Without them it still runs but text-less files fall to `unknown` (you now get a stderr warning). |
+| `build_index.py` — build the search index | ✅ **Real, working** | Only needs `pyyaml`. |
+| `synapse.py` — the query CLI | ✅ **Real, working** | Pure lookup over the index. |
+| `compiler.py` — **MockClient** | ✅ **Real, working** | Deterministic, offline, no network. Used by all tests/CI. |
+| `compiler.py` — **OllamaClient** (the real AI) | ⚙️ **Real code, external dependency** | Calls an [Ollama](https://ollama.com) server over HTTP. You must run that server yourself; nothing is bundled. Not exercised in this repo's tests. |
+| `promote.py` — learn vocabulary from proposals | ✅ **Real, working** | Atomic, locked, idempotent. |
+| `reclassify_apply.py` — apply approved re-filings | ✅ **Real, working** | Two-phase, crash-recoverable. |
+| `lint.py` — anomaly report | ✅ **Real, working** | Read-only. |
+| `collections_importer.py` — Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV | ✅ **Real, working** | Bookkeeping import. |
+| `validate.py` — schema gate | ✅ **Real, working** | The smoke test every stage reuses. |
+| `cadences/*.sh` — daily/weekly/monthly wrappers | ✅ **Real, working** | Plain POSIX `sh`; wire to any runner. |
+| **Credential resolution** (turn a `creds` ref into the actual secret) | ✅ **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `synapse resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
+| **File extractors** (turn documents into text) | ✅ **Real, working** | PDF, email (+attachments), JPEG/PNG (EXIF), text/CSV, **and now `.docx` / `.xlsx` / `.html`** (pure stdlib). Each degrades to empty text on error, never crashes. |
+| **Compile token efficiency** (contract 1.1) | ✅ **Real, working** | Source text is deterministically de-noised + budgeted before the LLM sees it; a fact-bearing line is never dropped; per-entity + aggregate token logging. The LLM still sees all real content. |
+| **Write-side secret guard** (keep secrets out of the vault) | ✅ **Real, working** | `secret_scan.py`: ingestion scans each source for secret-shaped strings and downgrades the stub to `needs-review` (never recording the secret); `validate.py` hard-fails any entity with a real credential in a frontmatter field. Two strictness tiers keep false positives out of the schema gate. |
+| The 3 files under `entities/` | 🎭 **Sample data** | Hand-written demos (furnace, BofA checking, furnace warranty). Not your data. Tests sandbox-copy these into `tmp_path` rather than shipping a separate synthetic fixture corpus. |
+| `raw/*` folders | 📭 **Empty** | Only `.gitkeep` placeholders. This is where *your* documents go. |
+| `discovery/`, `raw/collections/` | 📭 **Created on demand** | Do not exist until a run produces them. |
+| `registry/schema.yaml` (taxonomy) | ✅ **Real, lightly seeded** | 12 real entity types plus the `unknown` holding-pen type (never compiled); `tags:` has a handful of seed entries. |
+| `registry/patterns.yaml` (classifier vocabulary) | ✅ **Real, sizeable** | ~104 billers + 25 document shapes (see §8 for the category breakdown). Still grows as you meet niche/regional vendors. |
+| `registry/aliases.yaml` | ✅ **Real, tiny** | 2 seed aliases (`"bofa"`, `"bank of america checking"` → `bofa-checking`). Grows via `promote.py`. |
 
 ### What "not built" concretely means for you
 
@@ -102,47 +109,47 @@ order, from any runner.
 
 ```
         YOUR FILES                        THE WIKI                      YOU
-   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”           â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”      â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-   â”‚ raw/             â”‚  ingest   â”‚ entities/<type>/*.md  â”‚ indexâ”‚ synapse find â”‚
-   â”‚  statements/     â”‚ â”€â”€â”€â”€â”€â”€â”€â”€â–º â”‚  (one page per thing) â”‚ â”€â”€â”€â–º â”‚ synapse show â”‚
-   â”‚  documents/      â”‚           â”‚                       â”‚      â”‚ synapse due  â”‚
-   â”‚  email/  media/  â”‚           â”‚  frontmatter (facts)  â”‚      â”‚ synapse ...  â”‚
-   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜           â”‚  LINKS block          â”‚      â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-        (append-only)             â”‚  prose body  â—„â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€ compile (the LLM)
-                                   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                                           â”‚  â–²
-                          proposals.jsonl  â”‚  â”‚  registry/ (vocabulary)
-                                           â–¼  â”‚  schema Â· patterns Â· aliases
-                                      â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-                                      â”‚  promote     â”‚  â† only writer of vocabulary
-                                      â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+   ┌──────────────────┐           ┌──────────────────────┐      ┌──────────────┐
+   │ raw/             │  ingest   │ entities/<type>/*.md  │ index│ synapse find │
+   │  statements/     │ ────────► │  (one page per thing) │ ───► │ synapse show │
+   │  documents/      │           │                       │      │ synapse due  │
+   │  email/  media/  │           │  frontmatter (facts)  │      │ synapse ...  │
+   └──────────────────┘           │  LINKS block          │      └──────────────┘
+        (append-only)             │  prose body  ◄────────┼── compile (the LLM)
+                                   └──────────────────────┘
+                                           │  ▲
+                          proposals.jsonl  │  │  registry/ (vocabulary)
+                                           ▼  │  schema · patterns · aliases
+                                      ┌──────────────┐
+                                      │  promote     │  ← only writer of vocabulary
+                                      └──────────────┘
 ```
 
 **The pipeline, end to end:**
 
-1. **`ingest.py`** â€” walk `raw/`, hash each file (so re-runs are no-ops), detect
-   its kind, extract text/metadata, classify it (vendor patterns Ã— document
-   shapes Ã— file-type priors), and write an entity **stub** (facts only, empty
+1. **`ingest.py`** — walk `raw/`, hash each file (so re-runs are no-ops), detect
+   its kind, extract text/metadata, classify it (vendor patterns × document
+   shapes × file-type priors), and write an entity **stub** (facts only, empty
    prose). Emails fan out: the message and each attachment become separate,
    cross-linked subjects. Missing link targets get minimal `needs-review` stubs
    so the graph stays closed.
-2. **`compiler.py`** â€” for each stub (or any page whose sources changed), call
+2. **`compiler.py`** — for each stub (or any page whose sources changed), call
    the LLM to write the **prose body only**, and append any vocabulary
-   **proposals** it makes to `discovery/proposals.jsonl`. Flips `status: stub â†’
+   **proposals** it makes to `discovery/proposals.jsonl`. Flips `status: stub →
    compiled`.
-3. **`promote.py`** â€” drain those proposals, collapse synonyms through the alias
+3. **`promote.py`** — drain those proposals, collapse synonyms through the alias
    map, count "sightings," and graduate the good ones into the registry per the
    thresholds in `schema.yaml`. This is the **only** writer of the vocabulary.
-4. **`build_index.py`** + **`synapse.py`** â€” pre-extract every queryable field
+4. **`build_index.py`** + **`synapse.py`** — pre-extract every queryable field
    into `_index.json`, then answer questions by *filtering* it (never by
    reasoning over text).
-5. **`validate.py`** / **`lint.py`** â€” schema gate (hard pass/fail) and a
+5. **`validate.py`** / **`lint.py`** — schema gate (hard pass/fail) and a
    read-only operational anomaly report.
 
 Two side branches:
-- **`collections_importer.py`** â€” for catalog media you don't have files for
-  (Steam/Goodreads/IMDB/CSV exports) â†’ one `collection` entity per row.
-- **`reclassify_apply.py`** â€” the human-approved step that physically re-files an
+- **`collections_importer.py`** — for catalog media you don't have files for
+  (Steam/Goodreads/IMDB/CSV exports) → one `collection` entity per row.
+- **`reclassify_apply.py`** — the human-approved step that physically re-files an
   entity across type folders and rewrites every cross-reference.
 
 ---
@@ -154,7 +161,7 @@ every entity page:
 
 ```
 ---
-# â”€â”€ FRONTMATTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  author: PYTHON (ingest)   the FACTS
+# ── FRONTMATTER ───────────────  author: PYTHON (ingest)   the FACTS
 slug: carrier-furnace
 type: asset
 subtype: hvac
@@ -164,7 +171,7 @@ confidence: 0.95
 created: 2026-05-21
 sources: [raw/documents/furnace-receipt.pdf]
 sources_hash: a1b2c3d4e5f6
-compiled_from_hash: a1b2c3d4e5f6     # â† compile may set ONLY this + status
+compiled_from_hash: a1b2c3d4e5f6     # ← compile may set ONLY this + status
 expires: 2031-03-15
 related: [document/carrier-furnace-warranty]
 ---
@@ -173,7 +180,7 @@ related: [document/carrier-furnace-warranty]
 - Related: [[document/carrier-furnace-warranty]]
 <!-- LINKS:END -->
 
-The Carrier furnace in the basement was installed in 2021 and carries a   â† PROSE
+The Carrier furnace in the basement was installed in 2021 and carries a   ← PROSE
 10-year parts warranty through 2031. [NEEDS SOURCE: model/serial number].  author: LLM
 ```
 
@@ -181,15 +188,15 @@ The Carrier furnace in the basement was installed in 2021 and carries a   â†�
 |--------|--------|------|
 | Frontmatter | **Python** (ingest/promote) | The LLM must never touch it. Compile may change **only** `status` and `compiled_from_hash`. |
 | LINKS block | **Python** | Regenerated from `related:` every run. |
-| Prose body | **LLM** (compile) | The model's *only* writable surface. Never invents facts â€” emits `[NEEDS SOURCE: â€¦]` instead. |
+| Prose body | **LLM** (compile) | The model's *only* writable surface. Never invents facts — emits `[NEEDS SOURCE: …]` instead. |
 
-**`status` lifecycle:** `stub` â†’ (compile) â†’ `compiled`; low-confidence files
+**`status` lifecycle:** `stub` → (compile) → `compiled`; low-confidence files
 land in `needs-review` (or `unknown`) for a human to fix before they're worth
 compiling; `archived` is retired-but-kept.
 
 **`sources_hash` vs `compiled_from_hash`:** the first is a fingerprint of the
 source set; the second records what the prose was last built from. When they
-diverge, the compile pass knows to rewrite the prose â€” that's how new evidence
+diverge, the compile pass knows to rewrite the prose — that's how new evidence
 triggers a fresh summary.
 
 ### The registry (the vocabulary, under `registry/`)
@@ -198,9 +205,9 @@ triggers a fresh summary.
 |------|--------|---------|
 | `schema.yaml` | promotion only | The 12 types, their subtypes, page templates, gating flags, promotion thresholds, and graduated tags. |
 | `patterns.yaml` | human + promotion | The classifier's vocabulary: known billers and document shapes. **Edit this directly** to teach it a new vendor. Promotion also appends graduated billers/shapes here (evidence-backed + audited). |
-| `aliases.yaml` | promotion only | Surface form â†’ slug (`"boa"` â†’ `bofa-checking`). |
+| `aliases.yaml` | promotion only | Surface form → slug (`"boa"` → `bofa-checking`). |
 | `field_mappings.yaml` | promotion only | Learned field-extraction regexes (amounts, dates, IDs). **Promote-only writer** — each one is human-approved and passes a deterministic validation gate. |
-| `resolvers.yaml` | human | Credential backend config (scheme â†’ backend module). 9 backends implemented (see Â§2). |
+| `resolvers.yaml` | human | Credential backend config (scheme → backend module). 9 backends implemented (see §2). |
 | `_entity-template.md` | human | The three-region page template, fully commented. |
 
 **The anti-rot rule:** the LLM *proposes* vocabulary additions; only the
@@ -235,7 +242,7 @@ writes the vocabulary it later reads.
 ### Rules that never bend (from the spec)
 
 1. One author per file region.
-2. `raw/` is append-only â€” source documents are immutable.
+2. `raw/` is append-only — source documents are immutable.
 3. The LLM proposes; deterministic code commits.
 4. Secrets are **referenced** (`scheme://store/path`), never stored in plaintext.
 
@@ -243,27 +250,34 @@ writes the vocabulary it later reads.
 
 ## 5. Script reference
 
-Run any script with `-h`/`--help` for its own usage. All take an optional vault
-directory as the first argument (default: current directory).
+Every module below lives under `agent_vault/` and is invoked as
+**`python -m agent_vault.<module> [vault-dir] [args...]`** (default vault dir:
+current directory) — pass `-h`/`--help` for its own usage. Only `synapse`
+(retrieval + `compact`) and `serve` (the HTTP service) have installed
+console-script entry points: `agent-vault` and `agent-vault-serve`
+respectively (`pyproject.toml`'s `[project.scripts]`). Everything else in
+this table has **no** console entry — the `python -m agent_vault.<module>`
+form is the only way to run it directly.
 
-| Script | What it does | LLM? | Writes |
-|--------|--------------|:----:|--------|
-| `ingest.py` | `raw/` â†’ entity stubs; hashes for idempotency; classifies; auto-stubs missing link targets | no | `entities/`, `raw/_manifest.jsonl`, `_index.json` |
-| `compiler.py` | Writes prose for stubs / drifted pages; logs proposals | **yes** | prose body, `status`+`compiled_from_hash`, `discovery/proposals.jsonl` |
-| `promote.py` | Drains proposals → graduates vocabulary by threshold | no | `registry/schema.yaml`, `registry/aliases.yaml`, `registry/patterns.yaml` (billers/shapes), `registry/field_mappings.yaml`, `discovery/promoted.jsonl` |
-| `build_index.py` | Walks entities â†’ `_index.json` (+ human `_index.md`) | no | `_index.json`, `_index.md` |
-| `synapse.py` | Query CLI: `find`/`show`/`due`/`expiring`/`creds`/`resolve`/`list`/`compact` | no | nothing read-only (except `compact --apply`) |
-| `compact.py` | Bounds the append-only discovery logs without changing outcomes | no | rewrites `discovery/*.jsonl` (+ `.bak`) only with `--apply` |
-| `locking.py` | One vault-wide advisory write lock (used by all mutating passes) | no | `registry/_vault.lock` |
-| `resolvers/` | Credential resolution: dispatcher + 9 backends (`age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool`, `keychain`, `vault`) | no | nothing (reads external secret stores on demand) |
-| `validate.py` | Schema validator (incl. no-plaintext-secret gate); exit 1 on any error | no | nothing |
-| `secret_scan.py` | Detects secret-shaped strings; used by ingest (flag) + validate (reject) | no | nothing (library) |
-| `lint.py` | Operational anomaly report (9 checks); exit 1 on findings | no | optional JSON report only |
-| `reclassify_apply.py` | Applies human-approved reclassify proposals; re-files + rewrites refs | no | entity files, `discovery/promoted.jsonl` |
-| `review.py` | Human approve/reject: queued proposals (incl. new types) + needs-review entities | no | registry (on approve), entity `status:` lines, `discovery/promoted.jsonl` |
-| `collections_importer.py` | Library exports â†’ `collection` entities | no | `entities/collection/`, `raw/collections/_imports.jsonl` |
+| Module | Invocation | What it does | LLM? | Writes |
+|--------|------------|---------------|:----:|--------|
+| `ingest` | `python -m agent_vault.ingest .` | `raw/` → entity stubs; hashes for idempotency; classifies; auto-stubs missing link targets | no | `entities/`, `raw/_manifest.jsonl`, `_index.json` |
+| `compiler` | `python -m agent_vault.compiler .` | Writes prose for stubs / drifted pages; logs proposals | **yes** | prose body, `status`+`compiled_from_hash`, `discovery/proposals.jsonl` |
+| `promote` | `python -m agent_vault.promote .` | Drains proposals → graduates vocabulary by threshold | no | `registry/schema.yaml`, `registry/aliases.yaml`, `registry/patterns.yaml` (billers/shapes), `registry/field_mappings.yaml`, `discovery/promoted.jsonl` |
+| `build_index` | `python -m agent_vault.build_index .` | Walks entities → `_index.json` (+ human `_index.md`) | no | `_index.json`, `_index.md` |
+| `synapse` | `agent-vault <cmd>` (console script) | Query CLI: `find`/`show`/`due`/`expiring`/`creds`/`resolve`/`list`/`compact` | no | nothing read-only (except `compact --apply`) |
+| `compact` | `agent-vault compact [--apply]` or `python -m agent_vault.compact .` | Bounds the append-only discovery logs without changing outcomes | no | rewrites `discovery/*.jsonl` (+ `.bak`) only with `--apply` |
+| `locking` | (library, not run directly) | One vault-wide advisory write lock (used by all mutating passes) | no | `registry/_vault.lock` |
+| `resolvers/` | (library, not run directly) | Credential resolution: dispatcher + 9 backends (`age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool`, `keychain`, `vault`) | no | nothing (reads external secret stores on demand) |
+| `validate` | `python -m agent_vault.validate .` | Schema validator (incl. no-plaintext-secret gate); exit 1 on any error | no | nothing |
+| `secret_scan` | (library, not run directly) | Detects secret-shaped strings; used by ingest (flag) + validate (reject) | no | nothing (library) |
+| `lint` | `python -m agent_vault.lint .` | Operational anomaly report (9 checks); exit 1 on findings | no | optional JSON report only |
+| `reclassify_apply` | `python -m agent_vault.reclassify_apply .` | Applies human-approved reclassify proposals; re-files + rewrites refs | no | entity files, `discovery/promoted.jsonl` |
+| `review` | `python -m agent_vault.review . <cmd>` | Human approve/reject: queued proposals (incl. new types) + needs-review entities | no | registry (on approve), entity `status:` lines, `discovery/promoted.jsonl` |
+| `collections_importer` | `python -m agent_vault.collections_importer . --source <path>` | Library exports → `collection` entities | no | `entities/collection/`, `raw/collections/_imports.jsonl` |
+| `serve` | `agent-vault-serve` (console script) | FastAPI HTTP service — see [`docs/API.md`](./docs/API.md) | no | nothing (reads vault on demand) |
 
-**Cadence wrappers** (`cadences/`, plain `sh` â€” wire to cron/systemd/anything):
+**Cadence wrappers** (`cadences/`, plain `sh` — wire to cron/systemd/anything):
 
 | Wrapper | Runs | Cost |
 |---------|------|------|
@@ -276,21 +290,28 @@ directory as the first argument (default: current directory).
 
 ## 6. Setup & dependencies
 
-**Required:** Python 3 and `pyyaml`.
+**Required:** Python 3.11+ and the package itself — there's no separate
+`requirements.txt`; dependencies live in `pyproject.toml`.
 
 ```
-pip install pyyaml
+pip install -e .          # installs pyyaml, fastapi, uvicorn, sse-starlette + the agent-vault/agent-vault-serve CLIs
+pip install -e .[dev]     # + pytest, ruff, mypy — needed to run the test suite (see §5 above and CI)
 ```
 
 **Recommended** (without these, PDFs and images yield no text and pile up in
-`unknown` â€” `ingest.py` warns you on stderr when they're absent):
+`unknown` — `ingest` warns you on stderr when they're absent):
 
 ```
 pip install pdfplumber pillow python-magic
 ```
 
-`.docx` / `.xlsx` / `.html` need no extra packages â€” they're parsed with the
+`.docx` / `.xlsx` / `.html` need no extra packages — they're parsed with the
 standard library.
+
+To run the test suite: `pytest` (or `pytest -v`) from the repo root —
+`[tool.pytest.ini_options]` in `pyproject.toml` points it at `tests/`. `ruff
+check .` and `mypy agent_vault` are the lint/typecheck commands CI also runs
+(`.github/workflows/ci.yml`).
 
 **For real AI summaries** (otherwise use the offline mock):
 
@@ -312,30 +333,30 @@ export AGENT_VAULT_COMPILER=mock
 ## 7. Using it on your own files
 
 ```
-# 0. one-time: install deps (see Â§6)
+# 0. one-time: install deps (see §6)
 
 # 1. drop your documents into raw/ (append-only; organize into the
-#    subfolders if you like â€” the classifier doesn't require it)
+#    subfolders if you like — the classifier doesn't require it)
 cp ~/scans/*.pdf  agent-vault/raw/documents/
 cp ~/exports/*.eml agent-vault/raw/email/
 
-# 2. ingest â€” read, classify, write stubs
-python3 ingest.py .
+# 2. ingest — read, classify, write stubs
+python -m agent_vault.ingest .
 
-# 3. compile â€” write the human summaries (needs Ollama, or use mock)
-AGENT_VAULT_COMPILER=mock python3 compiler.py .       # offline
-#   or: AGENT_VAULT_COMPILER=ollama python3 compiler.py .
+# 3. compile — write the human summaries (needs Ollama, or use mock)
+AGENT_VAULT_COMPILER=mock python -m agent_vault.compiler .       # offline
+#   or: AGENT_VAULT_COMPILER=ollama python -m agent_vault.compiler .
 
-# 4. promote â€” fold any new vocabulary into the registry
-python3 promote.py .
+# 4. promote — fold any new vocabulary into the registry
+python -m agent_vault.promote .
 
 # 5. check & query
-python3 validate.py .
-python3 synapse.py find <text>
-python3 synapse.py expiring --days 90
+python -m agent_vault.validate .
+agent-vault find <text>
+agent-vault expiring --days 90
 ```
 
-Then automate steps 2â€“5 by pointing a runner at the cadence scripts:
+Then automate steps 2–5 by pointing a runner at the cadence scripts:
 
 ```cron
 @hourly  /path/to/agent-vault/cadences/daily.sh   /path/to/agent-vault
@@ -353,55 +374,74 @@ credential_ref: age://banking/bofa-login     # scheme://store/path
 Configure the backend once in `registry/resolvers.yaml`, then:
 
 ```
-python3 synapse.py creds bofa-checking      # shows the REFERENCE + backend only
-python3 synapse.py resolve bofa-checking    # fetches the SECRET on demand -> stdout
+agent-vault creds bofa-checking      # shows the REFERENCE + backend only
+agent-vault resolve bofa-checking    # fetches the SECRET on demand -> stdout
 ```
 
 `resolve` prints the secret to stdout and nothing else (so it pipes cleanly);
 context goes to stderr; the plaintext is never written back into the vault.
 
-Shipped backends (pick per ref by scheme):
+Shipped backends (pick per ref by scheme) — all 9 modules under
+`agent_vault/resolvers/`:
 
 | Scheme | Ref shape | Needs | Notes |
 |--------|-----------|-------|-------|
-| `age` | `age://store/path` | `age` binary + keyfile + `store_dir` of `.age` files | recommended for NAS |
+| `age` | `age://store/path` | `age` binary + keyfile + `store_dir` of `.age` files | recommended for NAS; has a real encrypt→resolve round-trip test |
 | `onepassword` | `onepassword://vault/item[/field]` | `op` CLI, signed in (or `OP_SERVICE_ACCOUNT_TOKEN`) | field defaults to `password` |
 | `bitwarden` | `bitwarden://item[/field]` | `bw` CLI, unlocked (`BW_SESSION`) | built-in or custom fields |
-| `vaultwarden` | `vaultwarden://item[/field]` | `bw` CLI pointed at your server | same backend as bitwarden |
-| `env` | `env://store/path` â†’ `STORE_PATH` | â€” | dev / non-secret only |
+| `vaultwarden` | `vaultwarden://item[/field]` | `bw` CLI pointed at your server | same backend module as bitwarden |
+| `pass` | `pass://category/entry` | `pass` (the standard Unix password manager) CLI | `pass show category/entry`; first line = the secret |
+| `gpg` | `gpg://store/path` | `gpg` binary + `store_dir` of `.gpg` files | has a real encrypt→resolve round-trip test |
+| `secret-tool` | `secret-tool://service[/account]` | `secret-tool` CLI (GNOME keyring) | Linux desktop only |
+| `keychain` | `keychain://service[/account]` | `security` CLI (macOS Keychain) | macOS only |
+| `vault` | `vault://mount/path[/field]` | HashiCorp Vault CLI, authenticated via `VAULT_ADDR`/`VAULT_TOKEN` | `vault kv get -field=<field> <mount>/<path>` |
+| `env` | `env://store/path` → `STORE_PATH` | — | dev / non-secret only |
+
+The CLI-based backends (`op`/`bw`/`pass`/`secret-tool`/`security`/`vault`) are
+tested against stub CLIs plus ref-parsing/security unit tests
+(`tests/test_resolvers.py`); `age` and `gpg` additionally get real
+encrypt→resolve round trips. None have been verified against live
+1Password/Bitwarden/Vault accounts yet.
 
 Auth is the operator's job (sign into `op`, unlock `bw`); the resolver just
 invokes the already-authenticated CLI. Add another backend by dropping a module
-in `resolvers/` and a stanza in `resolvers.yaml` â€” no schema change.
+in `agent_vault/resolvers/` and a stanza in `resolvers.yaml` — no schema change.
 
 **Reviewing the machine's guesses:** anything it wasn't sure about is written as
 `status: needs-review`. Open the file, fix `type`/`subtype` (or merge a
-duplicate), and let the next compile pass pick it up. `lint.py` will nag you
+duplicate), and let the next compile pass pick it up. `lint` will nag you
 about review items that have been sitting too long.
 
 ---
 
 ## 8. Known gaps / not yet built
 
-- **Nine resolver backends ship** (`age`, `env`, `onepassword`, `bitwarden`/
-  `vaultwarden`, `pass`, `gpg`, `secret-tool`, `keychain`, `vault`). The CLI-based
-  ones (`op`/`bw`/`pass`/`secret-tool`/`security`/`vault`) are tested with stub
-  CLIs + mapping unit tests; `age` and `gpg` have real encryptâ†’resolve round
-  trips. Not yet verified against live 1Password/Bitwarden/Vault accounts.
-- **OllamaClient plumbing is tested; real-model quality isn't.** `tests/
-  test_ollama_client.py` exercises the HTTP request construction, response
-  parsing, and every error path (unreachable / HTTP 500 / non-JSON) against a
-  mocked transport, and confirms `compile_all` isolates a raising client. What
-  remains environment-dependent is the *quality* of a real model's prose â€” that
-  depends on your `OLLAMA_MODEL` choice, not the harness.
-- **The pattern library covers ~100 common US billers** (banks, brokerages, card
+- **Nine resolver backends ship** — see the table in §7 for schemes and
+  requirements. None have been verified against live 1Password/Bitwarden/
+  Vault accounts; `age` and `gpg` are the only two with a real
+  encrypt→resolve round trip in the test suite.
+- **`OllamaClient` (the real AI path) has no test coverage today.** There is
+  no `tests/test_ollama_client.py` or equivalent — grepping `tests/` for
+  `OllamaClient`/`ollama` turns up nothing. Only `MockClient` (the offline,
+  deterministic path) is exercised, in `tests/test_compiler_only.py`. If
+  you're touching `agent_vault/compiler.py`'s `OllamaClient`
+  (`agent_vault/compiler.py:511`), you're extending untested code — consider
+  adding coverage (mock the HTTP transport; unreachable/HTTP-500/non-JSON
+  response handling is the obvious first pass) rather than assuming it's
+  already covered.
+- **The pattern library covers ~104 billers** (banks, brokerages, card
   issuers, P&C + health insurers, telecoms, utilities, streaming, subscriptions,
-  retailers, pharmacies, travel) and ~25 document shapes (statements, bills,
+  retailers, pharmacies, travel) and **25 document shapes** (statements, bills,
   warranties, paystubs, W2/1099, mortgage, HOA, medical EOB, lab results, lease,
-  invoice, vehicle registration, â€¦). Still expect to add niche/regional vendors â€”
-  a few lines of YAML; `tests/test_patterns.py` guards that every `default_tag`
-  exists in the schema and every shape maps to a real subtype.
-- **No real data ships here.** The 3 entities and `tests/fixtures/` are samples.
+  invoice, vehicle registration, …) in `registry/patterns.yaml`. Still expect to
+  add niche/regional vendors — a few lines of YAML;
+  `agent_vault/validate.py`'s `validate_patterns()` (run by `python -m
+  agent_vault.validate .` and exercised via `tests/test_validate.py`) guards
+  that every `default_tag` exists in the schema and every shape maps to a
+  real subtype.
+- **No real data ships here.** The 3 entities under `entities/` are the only
+  sample content; there is no separate synthetic fixture corpus — the test
+  suite sandbox-copies this same sample data into a `tmp_path` per test.
 
 ### Operational hardening (production posture)
 
@@ -416,34 +456,36 @@ about review items that have been sitting too long.
 - **Durability:** all vault writes are `tmp + fsync + os.replace` (atomic, and
   survive power loss before the rename).
 - **Observability:** each cadence appends a JSON run record to
-  `discovery/_runs.jsonl` (cadence, ts, rc, duration) â€” cron-debuggable.
+  `discovery/_runs.jsonl` (cadence, ts, rc, duration) — cron-debuggable.
 - **Log growth:** the append-only discovery logs are bounded on demand by
-  `python3 compact.py . --apply` (or `synapse compact --apply`), which dedups
-  `proposals.jsonl`/`promoted.jsonl` **without changing any promotion outcome**
-  (writes `.bak` backups first). Run it quarterly or wire it into a cadence.
-- **Packaging:** `requirements.txt` (PyYAML required; pdfplumber/Pillow/
-  python-magic optional) and `run_tests.sh` (one command runs the whole
-  no-pytest suite). Python 3.8+.
+  `agent-vault compact --apply` (or `python -m agent_vault.compact . --apply`),
+  which dedups `proposals.jsonl`/`promoted.jsonl` **without changing any
+  promotion outcome** (writes `.bak` backups first). Run it quarterly or wire
+  it into a cadence.
+- **Packaging:** dependencies and the `agent-vault`/`agent-vault-serve`
+  console scripts are declared in `pyproject.toml` (no separate
+  `requirements.txt`); `pytest` runs the test suite (no custom test runner).
+  Python 3.11+ (`pyproject.toml`'s `requires-python`).
 
 ---
 
 ## 9. Glossary
 
-- **Entity** â€” one Markdown page representing one real-world thing (an account, an
+- **Entity** — one Markdown page representing one real-world thing (an account, an
   appliance, a document).
-- **Stub** â€” a freshly ingested entity: facts filled in, prose empty, awaiting
+- **Stub** — a freshly ingested entity: facts filled in, prose empty, awaiting
   compile.
-- **Compile** â€” the single LLM step that writes an entity's prose body.
-- **Promote** â€” the deterministic step that graduates proposed vocabulary
+- **Compile** — the single LLM step that writes an entity's prose body.
+- **Promote** — the deterministic step that graduates proposed vocabulary
   (tags/aliases/subtypes) into the registry.
-- **Registry** â€” the canonical vocabulary under `registry/` (types, patterns,
+- **Registry** — the canonical vocabulary under `registry/` (types, patterns,
   aliases).
-- **Proposal** â€” a structured suggestion the LLM appends to
+- **Proposal** — a structured suggestion the LLM appends to
   `discovery/proposals.jsonl`; never applied directly.
-- **Sighting** â€” one occurrence of a proposed concept; promotion is threshold-
+- **Sighting** — one occurrence of a proposed concept; promotion is threshold-
   based on counts.
-- **Cadence** â€” a scheduled wrapper script (daily/weekly/monthly).
-- **Credential reference** â€” a `scheme://store/path` URI pointing at where a
+- **Cadence** — a scheduled wrapper script (daily/weekly/monthly).
+- **Credential reference** — a `scheme://store/path` URI pointing at where a
   secret lives; the secret itself is never stored in the vault.
 </content>
 </invoke>
