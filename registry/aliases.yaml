@@ -1,3 +1,7 @@
+# promote.py-ONLY writer. Do NOT hand-edit. (Like schema.yaml.)
+# Surface-form -> slug map, so lookups like "boa"/"bofa"/"Bank of America"
+# collapse to one canonical entity. Grown by the promotion step as aliases
+# clear their sighting threshold (registry/schema.yaml's promotion: block).
 version: 1
 aliases:
   "bofa": bofa-checking

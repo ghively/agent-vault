@@ -48,11 +48,13 @@ There is no CORS middleware and no other service-level configuration.
   route is open.
 - If set, every `/api/*` route (including `/api/health`) requires
   `Authorization: Bearer <token>`; a missing or mismatched token gets `401`.
-- Auth is attached **per-router** in `app.py:29-52`, scoped to `/api` only.
-  The SPA static mount (`/assets/*`, `/{full_path}` fallback) and FastAPI's
-  own `/docs`/`/redoc`/`/openapi.json` are **not gated** — a browser can
-  always load the UI shell; the UI's own `TokenGate` component then supplies
-  the bearer token on its `/api` calls (see `web/README.md`).
+- Auth is attached per-route (`/api/health` directly, `app.py:41`) and
+  per-router (the other six, via `include_router(..., dependencies=api_deps)`,
+  `app.py:47-52`) — scoped to `/api` only either way. The SPA static mount
+  (`/assets/*`, `/{full_path}` fallback) and FastAPI's own
+  `/docs`/`/redoc`/`/openapi.json` are **not gated** — a browser can always
+  load the UI shell; the UI's own `TokenGate` component then supplies the
+  bearer token on its `/api` calls (see `web/README.md`).
 - The web UI auto-clears a stored token on `401` but deliberately **not** on
   `403`, to avoid bouncing a session that's merely missing a specific
   permission rather than holding a bad token.
@@ -77,13 +79,13 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | POST | `/api/review/entities/{ref:path}/approve` | yes* | Approve a needs-review entity — `ref` is `type/slug` (e.g. `/api/review/entities/account/chase-mortgage/approve`) |
 | POST | `/api/review/entities/{ref:path}/reject` | yes* | Reject/archive a needs-review entity |
 | POST | `/api/jobs/run` | yes* | Start a pipeline stage as a subprocess. Body: `{"op": "ingest"\|"compile"\|"promote"\|"reclassify_apply", "args": []}` → `{"job_id", "status"}` |
-| GET | `/api/jobs/{job_id}` | yes* | Poll job status: `{"status", "returncode", "stdout": [...last 100 lines], "stderr": [...]}` |
+| GET | `/api/jobs/{job_id}` | yes* | Poll job status: `{"job_id", "status", "returncode", "stdout": [...last 100 lines], "stderr": [...]}` |
 | GET | `/api/jobs/{job_id}/stream` | yes* | **Server-Sent Events** stream of live `stdout`/`stderr` lines, ending in an `end` event with `{"status", "returncode"}` |
 | GET | `/api/runs` | yes* | Cadence run history from `discovery/_runs.jsonl`, newest-first. `?limit=50` (0–1000) |
 | GET | `/api/ledgers` | yes* | Entry counts for `discovery/proposals.jsonl`, `discovery/promoted.jsonl`, `raw/_manifest.jsonl` |
 | GET | `/api/settings` | yes* | Read-only config overview: service (host/port/vault_path/auth_enabled), vault (entity_count/index_built), compiler (prompt_contract_version/ollama_model), resolvers (default + configured backends), cadences (files present) |
 | GET | `/docs`, `/redoc`, `/openapi.json` | no | FastAPI's auto-generated Swagger UI / ReDoc / OpenAPI schema |
-| GET | `/assets/*` | no | Built SPA static assets (`web/dist/assets`), served only if `web/dist` exists |
+| GET | `/assets/*` | no | Built SPA static assets, served only if both `web/dist` and `web/dist/assets` exist (`app.py:56-60`) |
 | GET | `/{full_path}` | no | SPA fallback → `web/dist/index.html` (client-side routing) |
 
 \* only when `VAULT_TOKEN` is non-empty.
