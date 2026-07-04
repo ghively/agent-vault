@@ -4,13 +4,20 @@ _Date: 2026-07-04 · Scope: full repo (`agent_vault/` pipeline + API, `web/` UI,
 `cadences/`, `tests/`, docs) · Method: read-only code audit + two parallel
 sub-audits (backend/frontend) + web survey of comparable systems._
 
+**Purpose the audit is graded against:** Agent Vault is a **shared LLM wiki — a
+unified knowledgebase that multiple agents read from and write to**, with a
+deterministic, no-hallucination fact model. Priorities below reflect *that* goal:
+concurrency correctness, retrieval quality, and a clean machine read/write surface.
+Consumer features (human reminders, mobile capture, bill tracking) are out of
+scope.
+
 This document has three parts:
 
 1. **[Health snapshot](#1-health-snapshot)** — what's green today.
 2. **[Gaps & defects](#2-gaps--defects)** — confirmed bugs and completeness gaps,
    by tier and severity, each with a file reference and a concrete fix.
-3. **[Feature opportunities](#3-feature-opportunities)** — functionality that
-   comparable systems ship and Agent Vault could adopt, with a prioritized roadmap.
+3. **[Feature opportunities](#3-feature-opportunities)** — functionality a shared
+   multi-agent knowledgebase needs, with a prioritized roadmap.
 
 Nothing in the codebase was modified to produce this report.
 
@@ -127,25 +134,47 @@ web UI.
 
 ### 2.4 Cross-cutting completeness gaps
 
-These are absences rather than bugs — capabilities a "household system of record"
-is expected to have that don't exist anywhere in the 27 routes or the CLI:
+The intended use is a **shared LLM wiki — a unified knowledgebase that multiple
+agents read from and write to.** Judged against *that* purpose, these are the
+capabilities missing anywhere in the 27 routes or the CLI. (Note: this reframes
+the priorities below — human-facing "reminders/notifications" are explicitly
+**out of scope**; concurrency, retrieval quality, and a clean machine read/write
+surface are what matter.)
 
+- **Search is substring-only, metadata-only — the biggest limiter for agent
+  readers.** `synapse.cmd_find` (`synapse.py:111`) is a plain `if q in hay` over
+  concatenated slug/title/type/tags — the docstring calls it "fuzzy" but there is
+  no ranking, no typo tolerance, and it **never searches the prose bodies**. An
+  agent asking the wiki a question gets keyword-substring recall at best.
+  _(→ [O4](#o4--agent-facing-retrieval-full-text--semantic--rag))_
+- **No first-class agent write/contribute path with attribution.** Today the only
+  writers are `ingest` (facts from `raw/`), the single `compiler` LLM touchpoint
+  (prose), and `promote` (vocabulary). A *second* agent that wants to add
+  knowledge must drop a file in `raw/` and wait for a pipeline pass, or hand-edit
+  via `PATCH/PUT` — and **nothing records which agent wrote what.** A shared
+  multi-writer KB needs a defined contribution API and per-actor attribution in
+  the audit trail. _(→ [O5](#o5--agent-write-path--attribution))_
+- **Auth cannot distinguish agents.** One static bearer token gates all 26 routes
+  (`api/auth.py`). With N agents there is no per-agent identity, no read-vs-write
+  scoping, and no way to attribute or revoke a single agent. _(→ [O6](#o6--per-agent-identity-scoping--audit))_
+- **Index staleness under concurrent writers.** `_index.json` is rebuilt only by
+  `build_index`; a write that doesn't trigger a rebuild leaves every reader
+  (`find`/`show`/`/api/entities`) serving stale results. With multiple agents
+  writing asynchronously there is no freshness contract or auto-rebuild hook.
+  _(→ [O7](#o7--index-freshness--multi-writer-consistency))_
+- **Single-host locking.** The `flock` mutex (`locking.py`) serializes writers
+  **within one host**. Agents driving the HTTP service on one box are fine (jobs
+  serialize in-process), but concurrent *direct file access* from multiple
+  machines on a shared NAS mount would not serialize — worth an explicit
+  "one writer host" note or an advisory-lock-over-HTTP story.
 - **No backup / restore / export.** The only backup is `compact.py`'s `.bak`
-  files for JSONL ledgers. There is no vault snapshot, no export, no documented
-  restore path for the user's system of record. _(→ see [O1](#o1--vault-snapshot--export))_
+  files for JSONL ledgers. A shared system of record has no vault snapshot, no
+  export, no documented restore path. _(→ [O2](#o2--vault-snapshot--export))_
 - **No schema migration/versioning.** `registry/schema.yaml` has no
   `schema_version`; a renamed/removed type silently invalidates existing
-  entities with no upgrade tooling. _(→ [O2](#o2--schema-versioning--migration))_
-- **No reminders/notifications.** `expiring` and `due` exist as *pull* CLI
-  queries, but nothing *pushes* — no email/webhook/calendar when a warranty
-  lapses or a bill comes due. This is the single most-cited feature of every
-  comparable product. _(→ [O3](#o3--reminders--notifications))_
+  entities with no upgrade tooling. _(→ [O8](#o8--schema-versioning--migration))_
 - **No metrics/observability.** Only `uvicorn` request logs; no `/metrics`, no
-  structured logging, no counters.
-- **Search is substring-only, metadata-only.** `synapse.cmd_find` (`synapse.py:111`)
-  is a plain `if q in hay` over concatenated slug/title/type/tags — the docstring
-  calls it "fuzzy" but there is no ranking, no typo tolerance, and it **never
-  searches the prose bodies**. _(→ [O4](#o4--better-search-full-text--semantic))_
+  structured logging, no counters — thin for a service several agents depend on.
 - **Doc drift:** `AGENTS.md` claims `OllamaClient` "has none [no test coverage]",
   but `tests/test_ollama_client.py` (162 lines) covers its parsing/error paths
   against a mocked transport (only a *live* server is, correctly, unexercised).
@@ -155,103 +184,138 @@ is expected to have that don't exist anywhere in the 27 routes or the CLI:
 
 ## 3. Feature opportunities
 
-Surveyed against Paperless-ngx (self-hosted DMS), home-inventory apps (Under My
-Roof, HomeZada, Spullio), local-RAG stacks (Ollama + Chroma/Qdrant), and bill/
-subscription trackers (Rocket Money, Monarch, MoneyPatrol). Agent Vault's
-deterministic-facts model is a genuine differentiator; these are the gaps
-relative to what users of those tools expect. Ordered by value/effort.
+**Framing:** Agent Vault is a **shared LLM wiki — a single knowledgebase that
+multiple agents read from and write to.** So the yardstick is not consumer DMS/
+inventory apps (human reminders, mobile capture, bill negotiation are *not* the
+point); it is *how good an interface this is for a fleet of agents to query and
+contribute knowledge, safely, concurrently, and auditably.* The survey of local-
+RAG stacks (Ollama + Chroma/Qdrant/sqlite-vec) and self-hosted knowledge tools
+(Paperless-ngx's API, MCP knowledge servers) informs the list below. The
+deterministic-facts / no-hallucination core is the differentiator worth
+protecting through all of it. Ordered by value to the multi-agent use case.
 
-### O3 — Reminders & notifications _(highest value)_
-Every home-inventory and bill tracker's flagship feature is a *push* when a
-warranty/registration/bill approaches. Agent Vault already **computes** this
-(`expiring`, `due`) — it only lacks delivery. Add a `notify` cadence that runs
-the existing date queries and dispatches via a pluggable sink (email/SMTP,
-webhook, or an ICS calendar feed the user subscribes to). Fits the file-contract
-model: read-only over entities, append a `discovery/_notified.jsonl` for
-idempotency. **Low effort, transformative.**
+### O1 — MCP server: the native multi-agent read/write surface _(highest value)_
+The most direct expression of "multiple agents read and write" is to expose the
+vault as an **MCP server**, so any agent (Claude, a local model, another service)
+gets first-class tools without hand-rolling HTTP: `vault.search`, `vault.get`,
+`vault.list`, `vault.resolve_credential`, `vault.submit_source` (drop into
+`raw/`), `vault.propose` (append a discovery proposal). It wraps the existing
+service — no new invariant, no new writer — and turns the wiki into a
+plug-in knowledge tool for a whole fleet. This is the unifying integration and
+should anchor the roadmap.
 
-### O4 — Better search (full-text + optional semantic)
-Two tiers, both incremental over today's substring match:
-1. **Full-text over prose bodies** with ranking (stdlib: build an inverted index
-   in `build_index.py`, or ship a SQLite FTS5 sidecar index — still deterministic,
-   still rebuildable). Immediately fixes "search never looks inside the page."
-2. **Optional semantic search** — Ollama is *already a dependency* for compile;
-   reuse it for embeddings (`nomic-embed-text`/`mxbai-embed-large`) into a local
-   vector index (Chroma/sqlite-vec) for "find my HVAC warranty" natural-language
-   recall. Keep it **read-side only** so the core invariant is untouched — this
-   never writes vault facts, it only ranks retrieval.
+### O4 — Agent-facing retrieval: full-text → semantic → RAG _(highest value)_
+The current substring-over-metadata search is the biggest limiter for agent
+readers. Three incremental tiers, all **read-side only** so the core invariant is
+untouched:
+1. **Full-text over prose bodies** with ranking — a SQLite FTS5 sidecar index (or
+   a stdlib inverted index) built in `build_index.py`, still deterministic and
+   rebuildable. Immediately fixes "search never looks inside the page."
+2. **Semantic search** — Ollama is *already a dependency*; reuse it for
+   embeddings (`nomic-embed-text`/`mxbai-embed-large`) into a local vector index
+   (sqlite-vec/Chroma) so an agent's natural-language query recalls the right
+   entities even without keyword overlap.
+3. **Cited RAG answers** — upgrade `GET /api/ask` (today it answers from status/
+   date math) to retrieve top-k via tiers 1–2, feed the same Ollama client, and
+   return a grounded answer **that cites the source entities**. Keep it extractive
+   + cited to stay honest to the no-hallucination ethos. This is the headline
+   capability an agent expects from a shared KB.
 
-### O5 — Ask/RAG answers over the vault
-The `GET /api/ask` endpoint exists but answers from status/date math. A local-RAG
-layer (retrieve top-k entities via O4, feed to the same Ollama client, cite the
-source entities) turns "when does my furnace warranty expire and who installed
-it?" into a grounded, cited answer — the headline capability of every 2025 local
-document-Q&A stack, and a natural extension since the model client already exists.
-**Keep answers extractive + cited** to stay honest to the no-hallucination ethos.
+### O5 — Agent write path + attribution
+Define how a *second* agent contributes knowledge, and record who did. Today
+writes are `ingest`/`compiler`/`promote` only; other agents must drop files in
+`raw/` or hand-edit via `PATCH/PUT` with no actor record. Make the contribution
+path explicit (an MCP/HTTP `submit_source` + `propose` that funnel into the
+existing append-only, deterministic-commit pipeline) and **stamp every write with
+an agent identity** in `discovery/*.jsonl` — the audit ledger already exists; it
+just needs an `actor` field. Preserves the invariant (agents still only *propose*;
+`promote` still commits) while making multi-writer provenance first-class.
 
-### O1 — Vault snapshot / export
+### O6 — Per-agent identity, scoping & audit
+Replace the single static bearer token with per-agent tokens (read-only vs
+contributor scopes), so writes are attributable and one agent can be revoked
+without rotating everyone. Add an access log for `POST /creds/{slug}/resolve`
+(slug + actor + timestamp + outcome, never the secret) — with several agents able
+to resolve secrets, this is the one endpoint where an audit trail matters most.
+Pairs directly with O5's attribution.
+
+### O7 — Index freshness / multi-writer consistency
+Give the shared store a freshness contract so concurrent writers don't serve
+stale reads: auto-rebuild `_index.json` (or incrementally update it) at the end of
+any mutating pass / job, expose an index build-stamp via `/api/status`, and let
+readers detect staleness. Document the single-writer-host boundary of the `flock`
+mutex (or add an advisory-lock-over-HTTP path) for agents spread across machines.
+
+### O2 — Vault snapshot / export
 `agent-vault export --out vault-backup.tar.zst` (tar of `entities/` + `registry/`
-+ `discovery/`, excluding `raw/` by default with a `--include-raw` flag), plus a
-matching import/restore and a documented procedure. Optionally an API route.
-Comparable DMS tools treat this as table stakes for a system of record.
++ `discovery/`, `--include-raw` optional), plus a matching import/restore and a
+documented procedure. Table stakes for a shared system of record several agents
+depend on; also the safety net before any O8 migration.
 
-### O6 — More ingestion on-ramps (email + folder watch)
-Paperless-ngx's most-used intake is **IMAP polling** and **watched-folder
-consume**. Agent Vault already parses `.eml` with attachment fan-out — add a
-`fetch-mail` cadence (IMAP → `raw/email/`) and a folder-watch mode so documents
-flow in without manual copying. Pure orchestration around existing extractors.
+### O3 — Ingestion on-ramps (email + folder watch)
+Agent Vault already parses `.eml` with attachment fan-out — add an IMAP poller
+(→ `raw/email/`) and a watched-folder consume mode so knowledge flows in without
+an agent copying files by hand. Pure orchestration around existing extractors.
 
-### O7 — More collection importers & biller patterns _(content, not architecture)_
-The importer already covers Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/
-Audible/CSV. Cheap wins: Plex/Jellyfin libraries, bank OFX/QFX for
-account-statement ingest, and continued growth of `patterns.yaml` billers for
-regional vendors. This is the "future work is content" the README already
-anticipates.
-
-### O2 — Schema versioning & migration
+### O8 — Schema versioning & migration
 Add `schema_version` to `schema.yaml` and a migration shim (even a documented
-manual procedure + a `reclassify_apply`-style bulk retype) so a breaking taxonomy
-change has an upgrade path instead of silently invalidating entities.
+procedure + a `reclassify_apply`-style bulk retype) so a breaking taxonomy change
+has an upgrade path instead of silently invalidating entities — more pressing
+when many agents share one evolving vocabulary.
 
-### O8 — Barcode / serial / receipt capture (mobile-adjacent)
-Home-inventory apps lean on barcode + serial-number capture and per-item receipt
-photos. Agent Vault's asset entities could carry `serial`/`barcode`/`purchase`
-fields and link receipt images already in `raw/` — a schema + extractor
-enrichment, no new architecture.
+### O9 — More importers & biller patterns _(content, not architecture)_
+Cheap ongoing wins: more collection formats (Plex/Jellyfin), bank OFX/QFX for
+statement ingest, and continued `patterns.yaml` growth. The "future work is
+content" the README already anticipates.
 
-### Feature-parity matrix
+### Fit against the actual purpose (shared multi-agent LLM wiki)
 
-| Capability | Paperless-ngx | Home-inventory apps | Bill trackers | **Agent Vault today** |
-|---|:--:|:--:|:--:|:--:|
-| OCR / text extraction | ✅ | partial | — | ✅ (PDF/img EXIF/office/html) |
-| Auto-tagging / classification | ✅ (ML) | manual | — | ✅ (deterministic patterns) |
-| Full-text search of contents | ✅ | — | — | ❌ (metadata substring only) |
-| Semantic / NL Q&A | partial | — | — | ⚠️ scaffolded (`/api/ask`, no RAG) |
-| **Expiry/bill reminders (push)** | via tags | ✅ | ✅ | ❌ (compute-only, no delivery) |
-| Recurring-charge detection | — | — | ✅ | ❌ |
-| Email/folder auto-ingest | ✅ | — | — | ⚠️ (`.eml` parse, no poller) |
-| Backup / export / restore | ✅ | ✅ (cloud) | ✅ | ❌ |
-| Credential vault (referenced) | — | — | — | ✅ (9 backends, unique strength) |
-| No-hallucination / auditable facts | — | — | — | ✅ (core differentiator) |
+| Capability for a shared agent KB | Agent Vault today | Opportunity |
+|---|:--:|:--:|
+| Native agent tool interface (MCP) | ❌ (raw HTTP only) | **O1** |
+| Full-text search of page contents | ❌ (metadata substring) | O4·1 |
+| Semantic / NL retrieval | ❌ | O4·2 |
+| Grounded, **cited** Q&A over the KB | ⚠️ (`/api/ask`, no RAG) | O4·3 |
+| Defined agent write/contribute path | ⚠️ (raw drop / PATCH) | O5 |
+| Per-write **attribution** (which agent) | ❌ (single token) | O5·O6 |
+| Per-agent identity / scoping / revoke | ❌ | O6 |
+| Read-freshness under concurrent writes | ⚠️ (manual reindex) | O7 |
+| Concurrency serialization (writers) | ✅ (single-host `flock`) | O7 (multi-host) |
+| Deterministic, auditable, no-hallucination facts | ✅ | _protect_ |
+| Referenced-secret credential vault (9 backends) | ✅ | O6 (audit) |
+| Backup / export / restore | ❌ | O2 |
 
 ---
 
 ## 4. Recommended sequence
 
+Ordered for a **shared multi-agent LLM wiki** — concurrency correctness first,
+then the read/write interface agents actually need, then operational maturity.
+
 1. **D1** (recompile deadlock) + its integration test — a confirmed production
-   defect that CI hides. Small, isolated, high impact.
-2. **D2** (job task GC + `_runs.jsonl` recording) — correctness of the whole web
-   pipeline path.
-3. **O3** (reminders) — highest user-facing value, lowest effort, reuses existing
-   date queries.
-4. **F1/F2** (top-level error boundary + SSE cancel/abort) — the two frontend
-   robustness gaps that most affect real use.
-5. **O4 → O5** (full-text search → cited RAG answers) — the biggest capability
-   leap; sequence them since RAG builds on the search index.
-6. **O1/O6/O2** (backup, mail/folder ingest, schema versioning) — operational
-   maturity for a system of record.
-7. Content backlog: **B3** cadence tests, **F8** ESLint/CI, doc-drift fixes,
-   **O7** importers/patterns.
+   defect that CI hides; with agents driving recompiles it is hit constantly.
+2. **D2** (job task GC + `_runs.jsonl` recording) — correctness of the whole
+   agent-driven pipeline path, and the run-history contract readers rely on.
+3. **O4·1** (full-text search over prose) — the single biggest lift to how well
+   agents can *read* the wiki; unblocks O4·2/O4·3.
+4. **O1** (MCP server) — the native surface for a fleet of agents to read and
+   write; wraps the existing service, no new invariant.
+5. **O5 + O6** (agent write path with attribution + per-agent identity/scoping) —
+   makes multi-writer contribution defined, attributable, and revocable.
+6. **O7** (index freshness / multi-writer consistency) — no stale reads after a
+   concurrent write; document/extend the locking boundary.
+7. **O4·2 → O4·3** (semantic retrieval → cited RAG answers) — the biggest
+   capability leap; sequence after the FTS index and MCP surface exist.
+8. **F1/F2** (top-level error boundary + SSE cancel/abort) — frontend robustness
+   for the human operator/reviewer of the shared KB.
+9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for
+   a shared system of record.
+10. Backlog: **O3** (mail/folder ingest), **B3** cadence tests, **F8** ESLint/CI,
+    **O9** importers/patterns, doc-drift fixes.
+
+_Explicitly out of scope for this system: human-facing reminders/notifications,
+mobile capture, and consumer bill-tracking — Agent Vault is a knowledgebase for
+agents, not a household-alerting product._
 
 ---
 
