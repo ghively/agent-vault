@@ -73,6 +73,19 @@ def test_search_empty_query(tmp_path):
 
 # --- get --------------------------------------------------------------------
 
+def test_ask_is_grounded_and_cited(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_VAULT_RAG", "mock")
+    vault = _make_vault(tmp_path)
+    out = mcp_tools.ask(str(vault), "tell me about the furnace heating", mode="fts")
+    assert out["grounded"] is True
+    assert any(c["slug"] == "carrier-furnace" for c in out["citations"])
+
+
+def test_ask_rejects_bad_mode(tmp_path):
+    vault = _make_vault(tmp_path)
+    assert "error" in mcp_tools.ask(str(vault), "q", mode="nonsense")
+
+
 def test_get_entity_returns_detail(tmp_path):
     vault = _make_vault(tmp_path)
     out = mcp_tools.get_entity(str(vault), "carrier-furnace")

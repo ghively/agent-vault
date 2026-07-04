@@ -62,6 +62,24 @@ def search(vault: str, query: str, limit: int = 20, mode: str = "fts") -> dict[s
     return {"query": q, "mode": mode, "hits": hits, **caps}
 
 
+def ask(vault: str, question: str, k: int = 5, mode: str = "hybrid") -> dict[str, Any]:
+    """Grounded, cited answer to a natural-language question over the vault.
+
+    Retrieves the top-`k` entities (mode: fts/semantic/hybrid), grounds a local
+    model on their prose, and returns {question, answer, citations, sources,
+    grounded, client}. `citations` are the entities the answer actually
+    referenced; `grounded` is False if it cited nothing. Answers never invent
+    facts — they're constrained to the retrieved context.
+    """
+    from agent_vault import rag
+    if mode not in ("fts", "semantic", "hybrid"):
+        return _err("mode must be one of: fts, semantic, hybrid")
+    q = (question or "").strip()
+    if not q:
+        return _err("question is required")
+    return rag.answer(vault, q, k=k, mode=mode)
+
+
 def get_entity(vault: str, slug: str) -> dict[str, Any]:
     """Full record for one entity: facts, prose, sources, and resolved links.
 

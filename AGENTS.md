@@ -25,11 +25,13 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   apps. Full reference: [`web/README.md`](web/README.md).
 - **MCP**: `agent-vault-mcp` console script (optional `[mcp]` extra) — a Model
   Context Protocol server exposing the vault to agents as tools (`vault_search`,
-  `vault_get`, `vault_list`, `vault_status`, `vault_submit_source`,
+  `vault_ask`, `vault_get`, `vault_list`, `vault_status`, `vault_submit_source`,
   `vault_resolve_credential`). Thin FastMCP wiring (`mcp_server.py`) over pure,
   tested tool logic (`mcp_tools.py`); reads are lock-free, the only write
   (`submit_source`) is append-only into `raw/` with actor attribution, and
-  secret resolution is opt-in (`AGENT_VAULT_MCP_ALLOW_RESOLVE=1`).
+  secret resolution is opt-in (`AGENT_VAULT_MCP_ALLOW_RESOLVE=1`). Retrieval/
+  answer stack: `search.py` (FTS5) + `semantic.py` (embeddings) + `rag.py`
+  (cited answers); embedders/answerers are pluggable (Ollama or offline mock).
 
 Formerly embedded in SynapseNAS; now a standalone product consumed over HTTP.
 

@@ -54,6 +54,13 @@ def build_mcp(vault: str | None = None) -> Any:
         return mcp_tools.search(vault, query, limit, mode)
 
     @server.tool()
+    def vault_ask(question: str, k: int = 5, mode: str = "hybrid") -> dict[str, Any]:
+        """Grounded, cited answer to a natural-language question. Retrieves the
+        top-k entities and constrains a local model to their prose; returns the
+        answer plus the entities it cited. Never invents facts."""
+        return mcp_tools.ask(vault, question, k, mode)
+
+    @server.tool()
     def vault_get(slug: str) -> dict[str, Any]:
         """Full record for one entity: facts, prose, sources, and resolved
         links. Credentials appear as references only (use

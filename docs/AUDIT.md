@@ -323,10 +323,10 @@ content" the README already anticipates.
 
 | Capability for a shared agent KB | Agent Vault today | Opportunity |
 |---|:--:|:--:|
-| Native agent tool interface (MCP) | ❌ (raw HTTP only) | **O1** |
-| Full-text search of page contents | ❌ (metadata substring) | O4·1 |
-| Semantic / NL retrieval | ❌ | O4·2 |
-| Grounded, **cited** Q&A over the KB | ⚠️ (`/api/ask`, no RAG) | O4·3 |
+| Native agent tool interface (MCP) | ✅ (7 tools inc. search/ask) | ~~O1~~ ✅ |
+| Full-text search of page contents | ✅ (FTS5 bm25) | ~~O4·1~~ ✅ |
+| Semantic / NL retrieval | ✅ (embeddings + hybrid) | ~~O4·2~~ ✅ |
+| Grounded, **cited** Q&A over the KB | ✅ (`/api/answer`, `vault_ask`) | ~~O4·3~~ ✅ |
 | Defined agent write/contribute path | ⚠️ (raw drop / PATCH) | O5 |
 | Per-write **attribution** (which agent) | ❌ (single token) | O5·O6 |
 | Per-agent identity / scoping / revoke | ❌ | O6 |
@@ -364,6 +364,9 @@ then the read/write interface agents actually need, then operational maturity.
      pluggable embedder + offline MockEmbedder; `semantic.py` vector index
      (`_vectors.db`) + cosine + RRF hybrid; `search(mode=)`, `GET /api/search?mode=`,
      `vault_search(mode=)`).
+   - ~~**O4·3** (cited RAG answers)~~ — ✅ **done** (`rag.py`: pluggable answerer
+     + offline MockAnswerer; retrieval-grounded, citations verified against the
+     retrieved context, `grounded` flag; `GET /api/answer` + `vault_ask` MCP tool).
 8. **F1/F2** (top-level error boundary + SSE cancel/abort) — frontend robustness
    for the human operator/reviewer of the shared KB.
 9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for

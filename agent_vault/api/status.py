@@ -166,3 +166,24 @@ async def ask(
     if "expir" in ql or "renew" in ql:
         return {"intent": "expiring", "items": _expiring_items(ents)}
     return {"intent": "find", "items": _find_items(ents, q)}
+
+
+@router.get("/answer")
+async def answer(
+    q: str = Query(..., description="Natural-language question"),
+    k: int = Query(5, ge=1, le=20),
+    mode: str = Query("hybrid", pattern="^(fts|semantic|hybrid)$"),
+    s: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Grounded, cited RAG answer over the vault (O4.3).
+
+    Retrieves the top-`k` entities (via `mode`), hands only their prose to a
+    local model, and requires citations — reported citations are intersected
+    with what was retrieved, so the answer can't cite outside its context.
+    `grounded` is False when the answer cited nothing. Distinct from GET
+    /api/ask (deterministic routing, no LLM). Returns {question, answer,
+    citations, sources, grounded, client}.
+    """
+    from agent_vault import rag
+
+    return rag.answer(str(Path(s.vault_path)), q, k=k, mode=mode)

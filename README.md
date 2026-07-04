@@ -23,14 +23,29 @@ The vault is now a **standalone product** (severed from SynapseNAS). It can be u
 independently, consumed by other services over HTTP, or plugged into a fleet of
 agents over MCP as a shared, deterministic knowledgebase.
 
-### Retrieval: ranked, prose-aware search
+### Retrieval: keyword, semantic, and cited answers
 
-`agent-vault find <text>` and `GET /api/search?q=` run **ranked full-text search
-that reads inside the compiled prose bodies** (SQLite FTS5, bm25), not just a
-metadata substring match — so "forced-air heating" finds the furnace page even
-though that phrase appears only in its prose. Deterministic and rebuildable
-(`_index.db`, git-ignored); degrades to a metadata scan where FTS5 is
-unavailable. No model involved — this is read-side ranking, not generation.
+Three read-side layers, each deterministic where it can be and honest about the
+model where it can't:
+
+- **Full-text (O4.1)** — `agent-vault find` / `GET /api/search?q=` run **ranked
+  search inside the compiled prose bodies** (SQLite FTS5, bm25), not a metadata
+  substring match, so "forced-air heating" finds the furnace even though that
+  phrase is only in its prose. Rebuildable (`_index.db`, git-ignored); degrades
+  to a metadata scan where FTS5 is absent. No model.
+- **Semantic + hybrid (O4.2)** — `GET /api/search?mode=semantic|hybrid` (and
+  `python -m agent_vault.semantic build`) rank by embedding cosine, so a
+  natural-language query recalls the right entities without keyword overlap.
+  Embeddings come from a pluggable embedder (local Ollama, or a deterministic
+  offline mock); `hybrid` fuses keyword + semantic by reciprocal-rank fusion.
+- **Cited answers (O4.3)** — `GET /api/answer?q=` (and the `vault_ask` MCP tool)
+  retrieve the top entities, constrain a **local** model to only that prose, and
+  return an answer **with verified citations** — a cited slug is reported only if
+  it was actually retrieved, and `grounded:false` flags an unsupported answer.
+  Extractive and cited by design, to stay honest to the no-hallucination core.
+
+Set `AGENT_VAULT_EMBEDDER=mock` / `AGENT_VAULT_RAG=mock` to run the semantic and
+answer paths fully offline (used by the test suite).
 
 ## Install
 
