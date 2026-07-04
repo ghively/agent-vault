@@ -115,9 +115,17 @@ export function QuickPanel() {
           <div style={{ color: "#666", fontSize: 11 }}>uptime — · schema v1</div>
         </div>
         <div style={{ display: "flex", gap: 8, color: "#888", fontSize: 14 }}>
-          <span style={{ cursor: "default" }} title="not implemented yet">⏻</span>
-          <span style={{ cursor: "default" }} title="not implemented yet">⟲</span>
-          <span style={{ cursor: "pointer" }} onClick={togglePanel}>⏷</span>
+          <span aria-hidden style={{ cursor: "default" }} title="not implemented yet">⏻</span>
+          <span aria-hidden style={{ cursor: "default" }} title="not implemented yet">⟲</span>
+          <button
+            type="button"
+            aria-label="Collapse panel"
+            onClick={togglePanel}
+            style={{ cursor: "pointer", background: "transparent", border: "none",
+                     color: "inherit", font: "inherit", padding: 0 }}
+          >
+            ⏷
+          </button>
         </div>
       </div>
 
@@ -176,18 +184,21 @@ export function QuickPanel() {
           {(["dark", "light"] as const).map((th) => {
             const active = theme === th;
             return (
-              <span
+              <button
+                type="button"
                 key={th}
+                aria-pressed={active}
                 onClick={() => setTheme(th)}
                 style={{
-                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12,
+                  cursor: "pointer", font: "inherit",
                   border: `1px solid ${active ? "rgba(0,255,0,0.6)" : "rgba(0,255,0,0.18)"}`,
                   color: active ? "#00ff00" : "#555",
                   background: active ? "rgba(0,255,0,0.12)" : "rgba(0,0,0,0.3)",
                 }}
               >
                 {th}
-              </span>
+              </button>
             );
           })}
         </div>
@@ -200,18 +211,21 @@ export function QuickPanel() {
           {(["comfortable", "compact"] as const).map((dens) => {
             const active = density === dens;
             return (
-              <span
+              <button
+                type="button"
                 key={dens}
+                aria-pressed={active}
                 onClick={() => setDensity(dens)}
                 style={{
-                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12,
+                  cursor: "pointer", font: "inherit",
                   border: `1px solid ${active ? "rgba(0,255,0,0.6)" : "rgba(0,255,0,0.18)"}`,
                   color: active ? "#00ff00" : "#555",
                   background: active ? "rgba(0,255,0,0.12)" : "rgba(0,0,0,0.3)",
                 }}
               >
                 {dens}
-              </span>
+              </button>
             );
           })}
         </div>
@@ -224,18 +238,21 @@ export function QuickPanel() {
           {["mock", "ollama"].map((opt) => {
             const active = compiler === opt;
             return (
-              <span
+              <button
+                type="button"
                 key={opt}
+                aria-pressed={active}
                 onClick={() => handleCompilerToggle(opt)}
                 style={{
-                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12,
+                  cursor: "pointer", font: "inherit",
                   border: `1px solid ${active ? "rgba(0,255,0,0.6)" : "rgba(0,255,0,0.18)"}`,
                   color: active ? "#00ff00" : "#555",
                   background: active ? "rgba(0,255,0,0.12)" : "rgba(0,0,0,0.3)",
                 }}
               >
                 {opt}
-              </span>
+              </button>
             );
           })}
         </div>
@@ -301,17 +318,19 @@ export function QuickPanel() {
       </div>
 
       {/* open settings */}
-      <span
+      <button
+        type="button"
         onClick={() => openApp("vault")}
         style={{
-          cursor: "pointer", display: "block", textAlign: "center",
-          fontSize: 12, padding: 9, borderRadius: 8,
+          cursor: "pointer", display: "block", width: "100%", textAlign: "center",
+          fontSize: 12, padding: 9, borderRadius: 8, font: "inherit",
+          background: "transparent",
           border: "1px solid rgba(0,255,0,0.4)", color: "#00ff00",
           textShadow: "0 0 5px #00ff00",
         }}
       >
         ◆ Open Agent Vault
-      </span>
+      </button>
     </div>
   );
 }

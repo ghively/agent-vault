@@ -385,7 +385,10 @@ then the read/write interface agents actually need, then operational maturity.
    invalidates status/review queries on job completion — F6). Also **F3** (only
    the 8 used icons bundled, not 48), **F7** (Browse type chips derived from
    `/api/schema`), **F8** (ESLint 9 flat config + `npm run lint` + CI step;
-   dead-code cleanups), and Waybar badges show `!` on API error not a false `0`.
+   dead-code cleanups), Waybar badges show `!` on API error not a false `0`,
+   **F4** (QuickPanel toggles are real `<button aria-pressed>`s, keyboard-
+   operable), and **F5** (`useFocusTrap` traps Tab + restores focus in the Creds
+   secret-reveal modal; reusable for the other dialogs).
 9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for
    a shared system of record.
    - ~~**O2** (vault snapshot / export / restore)~~ — ✅ **done**
