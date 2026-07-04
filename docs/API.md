@@ -8,7 +8,8 @@ and any external consumer (e.g. SynapseNAS) talk to.
 
 Source of truth: `agent_vault/api/app.py` (router wiring) + one module per
 concern under `agent_vault/api/`: `reads.py`, `creds.py`, `review.py`,
-`jobs.py`, `history.py`, `settings.py`, `auth.py`, `config.py`.
+`jobs.py`, `history.py`, `settings.py`, `status.py`, `vault_config.py`,
+`auth.py`, `config.py`.
 
 ## Starting the service
 
@@ -33,10 +34,14 @@ Read once at startup by `Settings.from_env()` (`agent_vault/api/config.py:29-47`
 | `AGENT_VAULT_PATH` | `.` | Vault data directory (entities/, registry/, raw/, discovery/) |
 | `VAULT_TOKEN` | `""` (empty = auth disabled) | Bearer token required on `/api/*` |
 
-Two more env vars are read ad hoc (not part of the `Settings` dataclass) and
-surfaced read-only via `GET /api/settings`:
-- `OLLAMA_MODEL` — reported back so the UI can show which compiler model is configured.
-- Compiler selection (`AGENT_VAULT_COMPILER`, `OLLAMA_HOST`) is read by `agent_vault/compiler.py` itself, not the API layer — it only matters to jobs the API spawns (`POST /api/jobs/run` with `op=compile`).
+Four more env vars are read ad hoc (not part of the `Settings` dataclass) and
+surfaced via `GET /api/config` (and, model only, `GET /api/settings`):
+`AGENT_VAULT_COMPILER`, `AGENT_VAULT_PER_SOURCE_CHARS`, `AGENT_VAULT_MAX_RAW_MB`,
+`OLLAMA_MODEL`. They are read by the pipeline modules themselves
+(`compiler.py`/`ingest.py`), not the API layer — they only matter to jobs the
+API spawns (`POST /api/jobs/run`). These four (and ONLY these four) can be
+changed at runtime via `POST /api/config/apply`, which validates and writes
+them into `os.environ` so subsequent jobs inherit them.
 
 There is no CORS middleware and no other service-level configuration.
 
@@ -46,11 +51,15 @@ There is no CORS middleware and no other service-level configuration.
 
 - If `VAULT_TOKEN` is unset/empty, the dependency is a no-op — every `/api/*`
   route is open.
-- If set, every `/api/*` route (including `/api/health`) requires
+- If set, every `/api/*` route **except `/api/health`** requires
   `Authorization: Bearer <token>`; a missing or mismatched token gets `401`.
-- Auth is attached per-route (`/api/health` directly, `app.py:41`) and
-  per-router (the other six, via `include_router(..., dependencies=api_deps)`,
-  `app.py:47-52`) — scoped to `/api` only either way. The SPA static mount
+  Token comparison is constant-time (`secrets.compare_digest`), so response
+  timing can't leak token prefixes.
+- `/api/health` is deliberately **unauthenticated**: LB/orchestrator liveness
+  probes can't send bearer tokens. It returns only `{"ok": true}` — no vault
+  data.
+- Auth is attached per-router (via `include_router(..., dependencies=api_deps)`
+  in `app.py`) — scoped to `/api` only. The SPA static mount
   (`/assets/*`, `/{full_path}` fallback) and FastAPI's own
   `/docs`/`/redoc`/`/openapi.json` are **not gated** — a browser can always
   load the UI shell; the UI's own `TokenGate` component then supplies the
@@ -66,7 +75,7 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/health` | yes* | Liveness check → `{"ok": true}` |
+| GET | `/api/health` | no | Liveness check → `{"ok": true}` (open so LB/orchestrator probes work; liveness info only) |
 | GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters |
 | GET | `/api/entities/{slug}` | yes* | Full entity record: prose, facts, sources, resolved links |
 | POST | `/api/entities/{slug}/recompile` | yes* | Force one entity to `status: stub` and recompile it synchronously, under the vault write-lock |
@@ -78,44 +87,108 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | POST | `/api/review/proposals/{pid}/reject` | yes* | Reject a queued proposal |
 | POST | `/api/review/entities/{ref:path}/approve` | yes* | Approve a needs-review entity — `ref` is `type/slug` (e.g. `/api/review/entities/account/chase-mortgage/approve`) |
 | POST | `/api/review/entities/{ref:path}/reject` | yes* | Reject/archive a needs-review entity |
-| POST | `/api/jobs/run` | yes* | Start a pipeline stage as a subprocess. Body: `{"op": "ingest"\|"compile"\|"promote"\|"reclassify_apply", "args": []}` → `{"job_id", "status"}` |
+| POST | `/api/jobs/run` | yes* | Start a pipeline stage as a subprocess. Body: `{"op": "ingest"\|"compile"\|"promote"\|"reclassify_apply"\|"lint"\|"compact", "args": []}` → `{"job_id", "status"}`. Unknown op → `422`; args outside the per-op allowlist (see below) → `400` |
 | GET | `/api/jobs/{job_id}` | yes* | Poll job status: `{"job_id", "status", "returncode", "stdout": [...last 100 lines], "stderr": [...]}` |
 | GET | `/api/jobs/{job_id}/stream` | yes* | **Server-Sent Events** stream of live `stdout`/`stderr` lines, ending in an `end` event with `{"status", "returncode"}` |
 | GET | `/api/runs` | yes* | Cadence run history from `discovery/_runs.jsonl`, newest-first. `?limit=50` (0–1000) |
 | GET | `/api/ledgers` | yes* | Entry counts for `discovery/proposals.jsonl`, `discovery/promoted.jsonl`, `raw/_manifest.jsonl` |
 | GET | `/api/settings` | yes* | Read-only config overview: service (host/port/vault_path/auth_enabled), vault (entity_count/index_built), compiler (prompt_contract_version/ollama_model), resolvers (default + configured backends), cadences (files present) |
+| GET | `/api/status` | yes* | Dashboard snapshot: `{"counts": {total, compiled, needs_review}, "due": [...], "expiring": [...], "breakdown": {<type>: n}, "last_run": {...}\|null}` (see shapes below) |
+| GET | `/api/ask?q=<str>` | yes* | Deterministic query routing (no LLM): → `{"intent": "due"\|"expiring"\|"find", "items": [...]}`. Missing `q` → `422`; empty `q` → empty find result |
+| GET | `/api/config` | yes* | Runtime pipeline config: `{"env": {...}, "thresholds": {...}, "resolvers": [{"name","detail"}]}` (see shapes below) |
+| POST | `/api/config/apply` | yes* | Apply allowlisted env changes. Body: `{"env"?: {...}, "thresholds"?: {...}}` → same shape as `GET /api/config`. Unknown env keys / invalid values / any `thresholds` → `400` |
 | GET | `/docs`, `/redoc`, `/openapi.json` | no | FastAPI's auto-generated Swagger UI / ReDoc / OpenAPI schema |
 | GET | `/assets/*` | no | Built SPA static assets, served only if both `web/dist` and `web/dist/assets` exist (`app.py:56-60`) |
 | GET | `/{full_path}` | no | SPA fallback → `web/dist/index.html` (client-side routing) |
 
-\* only when `VAULT_TOKEN` is non-empty.
+\* only when `VAULT_TOKEN` is non-empty. `/api/health` is never gated.
 
 `tests/api/test_openapi.py` asserts every route above (except `/api/settings`)
 is present in `app.openapi()["paths"]` — a useful spot-check if you add or
 rename a route.
 
-**Not implemented, but called by the frontend:** `web/src/screens/CommandDeck.tsx`
-calls `GET /api/ask?q=` and `GET /api/status` — neither exists in any router
-above. Opening the "Command Deck" app in the UI will 404. See
-[`../web/README.md`](../web/README.md#known-gaps-dont-be-surprised-by-these)
-for details if you're picking this up.
+## Dashboard & config shapes (`status.py`, `vault_config.py`)
+
+These four routes back the web UI's Command Deck and Config screens; the
+authoritative client-side contract is `web/src/api/types.ts`.
+
+`GET /api/status` — all in-process reads (no LLM, no subprocess):
+
+```jsonc
+{
+  "counts": { "total": 42, "compiled": 30, "needs_review": 5 },   // from _index.json status fields
+  "due":      [{ "slug": "...", "title": "...", "date": "2026-07-10", "days": 6 }],          // `due` dates ≤30d, same filter as `synapse due`
+  "expiring": [{ "slug": "...", "title": "...", "date": "...", "days": 12, "field": "expires" }], // `expires`/`renews` ≤90d; field says which
+  "breakdown": { "account": 12, "document": 20 },                 // entity count per type
+  "last_run": { "cadence": "daily", "ts": "...", "rc": 0, "duration_s": 12, "detail": "..." } // last line of discovery/_runs.jsonl, or null
+}
+```
+
+`GET /api/ask?q=<str>` — deterministic routing, never a model: `q` containing
+`due` → due items; containing `expir`/`renew` → expiring items; anything else →
+substring find over the index (same haystack as `synapse find`: slug/title/
+type/subtype/tags/aliases). Response: `{"intent": "due"|"expiring"|"find",
+"items": [...]}` where find items are `{"slug","title","type","subtype","tags"}`.
+
+`GET /api/config`:
+
+```jsonc
+{
+  "env": {   // current values, falling back to the pipeline modules' real defaults
+    "AGENT_VAULT_COMPILER": "ollama",           // compiler.py:get_client
+    "AGENT_VAULT_PER_SOURCE_CHARS": "4000",     // compiler.py:PER_SOURCE_CHAR_CAP
+    "AGENT_VAULT_MAX_RAW_MB": "50",             // ingest.py:MAX_RAW_BYTES
+    "OLLAMA_MODEL": "qwen2.5:7b-instruct"       // compiler.py:OllamaClient
+  },
+  "thresholds": {  // registry/schema.yaml `promotion:` block (what promote.py applies)
+    "new_tag_min": 3, "new_subtype_min": 2, "new_type_locked": true
+  },
+  "resolvers": [{ "name": "age", "detail": "age-encrypted file store" }]  // registry/resolvers.yaml (scheme/description)
+}
+```
+
+`POST /api/config/apply` with `{"env"?: {...}, "thresholds"?: {...}}`:
+- `env`: **only** the four keys above are accepted (anything else → `400`, and
+  nothing from the request is applied). Values are validated —
+  `AGENT_VAULT_COMPILER` must be `ollama`/`mock`, the numeric knobs must be
+  positive ints within sane bounds, `OLLAMA_MODEL` must be a safe model-name
+  string. Valid changes go into `os.environ`, which subsequent jobs inherit
+  (`jobs.py:_vault_env` builds the child env from `os.environ`).
+- `thresholds`: always `400` — thresholds are read-only via the API; edit
+  `registry/schema.yaml`'s `promotion:` block instead.
+- Response: the same shape as `GET /api/config`, re-read fresh.
 
 ## The jobs/SSE mechanism (how the web UI runs the pipeline)
 
 `POST /api/jobs/run` is how a browser triggers `ingest`/`compile`/`promote`/
-`reclassify_apply` without shelling into the box. It:
+`reclassify_apply`/`lint`/`compact` without shelling into the box. It:
 
-1. Validates `op` against `ALLOWED_OPS = {"ingest", "compile", "promote", "reclassify_apply"}`
-   (`agent_vault/api/jobs.py:27`) — anything else is `422`.
-2. Maps `op` to a module (`agent_vault.ingest`, `agent_vault.compiler`, etc.)
+1. Validates `op` against `ALLOWED_OPS = {"ingest", "compile", "promote",
+   "reclassify_apply", "lint", "compact"}` (`agent_vault/api/jobs.py`) —
+   anything else is `422`. (`lint` is what the web UI uses for dry-run checks;
+   `compact` is dry-run by default and only writes with `--apply`.)
+2. Validates `args` against a **per-op flag allowlist** (`jobs.py:OP_FLAGS`) —
+   anything outside it is `400` with a message naming the offending flag/value.
+   Allowed flags mirror each module's CLI: `compile` takes `--limit <n>`,
+   `--only <slug>`, `--model <name>`; `promote` takes `--dry-run`;
+   `reclassify_apply` takes `--slug <slug>`, `--dry-run`; `lint` takes
+   `--json`, `--aging-days <n>` (deliberately **not** `--report`, which writes
+   to a caller-chosen path); `compact` takes `--apply`; `ingest` takes none.
+   Flag values and bare positionals must match conservative patterns (slugs:
+   `^[a-z0-9][a-z0-9._-]{0,127}$`) — no paths, traversal, or shell metacharacters.
+3. Maps `op` to a module (`agent_vault.ingest`, `agent_vault.compiler`, etc.)
    and spawns `sys.executable -m <module> <args>` as an **argv-list subprocess
-   with `shell=False`** (`jobs.py:164-170`) — no shell injection surface even
-   though `args` is caller-supplied.
-3. Pins `AGENT_VAULT_PATH` in the child's environment to the server's own
-   configured vault path (`jobs.py:133-147`), so a caller cannot redirect a
+   with `shell=False`** — no shell injection surface on top of the allowlist.
+4. Pins `AGENT_VAULT_PATH` in the child's environment to the server's own
+   configured vault path (`jobs.py:_vault_env`), so a caller cannot redirect a
    job at an arbitrary filesystem location.
-4. Buffers stdout/stderr in memory against an in-memory `JobRegistry`
-   (`jobs.py:44-91`) — jobs do not survive a service restart, and there is no
+5. Drains the child's stdout and stderr pipes **concurrently**
+   (`jobs.py:run_job`) — sequential draining deadlocks once a child fills the
+   ~64KB stderr pipe buffer — and buffers them in memory against an in-memory
+   `JobRegistry`. Per-job buffers keep the last 2000 lines each
+   (`MAX_LOG_LINES`), and finished jobs beyond the most recent 50
+   (`MAX_FINISHED_JOBS`) are evicted when new jobs are created (running jobs
+   are never evicted). Jobs do not survive a service restart, and there is no
    persistence; this is a single-host, single-process design.
 
 Two ways to observe a running job:

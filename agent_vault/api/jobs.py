@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import uuid
+from collections import deque
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,12 +26,97 @@ import json
 from agent_vault.api.config import Settings
 
 # Allowed operations - must be validated before subprocess execution
-ALLOWED_OPS = {"ingest", "compile", "promote", "reclassify_apply"}
+ALLOWED_OPS = {"ingest", "compile", "promote", "reclassify_apply", "lint", "compact"}
+
+# Per-job log buffers are capped so a chatty child can't grow memory unbounded.
+MAX_LOG_LINES = 2000
+# Finished (completed/failed) jobs beyond this many are evicted, oldest first.
+# Running/pending jobs are never evicted.
+MAX_FINISHED_JOBS = 50
+
+# --- args allowlist ----------------------------------------------------------
+# Conservative value patterns. Anything not matching is rejected with 400 —
+# args are forwarded to `python -m agent_vault.<module>` so we never pass
+# arbitrary flags/paths from the network into the CLIs.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_POSINT_RE = re.compile(r"^[1-9][0-9]{0,5}$")
+_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+# op -> {flag: value-pattern or None (boolean flag, takes no value)}
+# Derived from each module's CLI (see agent_vault/<module>.py main()):
+#   ingest            — no flags (positional vault only)
+#   compiler          — --limit N, --only <slug>, --model <name>
+#   promote           — --dry-run
+#   reclassify_apply  — --slug <slug>, --dry-run
+#   lint              — --json, --aging-days N   (--report writes files: NOT allowed)
+#   compact           — --apply
+OP_FLAGS: dict[str, dict[str, re.Pattern[str] | None]] = {
+    "ingest": {},
+    "compile": {"--limit": _POSINT_RE, "--only": _SLUG_RE, "--model": _MODEL_RE},
+    "promote": {"--dry-run": None},
+    "reclassify_apply": {"--slug": _SLUG_RE, "--dry-run": None},
+    "lint": {"--json": None, "--aging-days": _POSINT_RE},
+    "compact": {"--apply": None},
+}
+
+
+def validate_args(op: str, args: list[str]) -> None:
+    """Validate job args against the per-op flag allowlist.
+
+    Raises:
+        HTTPException: 400 with a clear message for any disallowed flag,
+            malformed flag value, or unsafe positional argument.
+    """
+    allowed = OP_FLAGS.get(op, {})
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-"):
+            if a not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Flag {a!r} not allowed for op {op!r}. "
+                        f"Allowed flags: {sorted(allowed) or 'none'}"
+                    ),
+                )
+            pattern = allowed[a]
+            if pattern is not None:
+                if i + 1 >= len(args):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Flag {a!r} requires a value",
+                    )
+                value = args[i + 1]
+                if not pattern.match(value):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid value {value!r} for flag {a!r}",
+                    )
+                i += 2
+                continue
+        else:
+            # Positional values (e.g. slugs) must be conservative — no paths,
+            # no leading dashes/dots, nothing shell- or traversal-shaped.
+            if not _SLUG_RE.match(a):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Positional argument {a!r} rejected: must match "
+                        f"{_SLUG_RE.pattern}"
+                    ),
+                )
+        i += 1
 
 
 @dataclass
 class Job:
-    """A subprocess job with status tracking and log buffering."""
+    """A subprocess job with status tracking and log buffering.
+
+    stdout/stderr are bounded deques (last MAX_LOG_LINES lines each);
+    stdout_seen/stderr_seen count every line ever appended so streaming
+    consumers can detect new output even after old lines are evicted.
+    """
 
     id: str
     op: str
@@ -37,8 +124,20 @@ class Job:
     proc: asyncio.subprocess.Process | None = None
     status: str = "pending"  # pending, running, completed, failed
     returncode: int | None = None
-    stdout: list[str] = field(default_factory=list)
-    stderr: list[str] = field(default_factory=list)
+    stdout: deque[str] = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
+    stderr: deque[str] = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
+    stdout_seen: int = 0
+    stderr_seen: int = 0
+
+    def add_stdout(self, line: str) -> None:
+        """Append a stdout line, tracking the all-time line count."""
+        self.stdout.append(line)
+        self.stdout_seen += 1
+
+    def add_stderr(self, line: str) -> None:
+        """Append a stderr line, tracking the all-time line count."""
+        self.stderr.append(line)
+        self.stderr_seen += 1
 
 
 class JobRegistry:
@@ -51,8 +150,19 @@ class JobRegistry:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
 
+    def _evict_finished(self) -> None:
+        """Drop the oldest finished jobs beyond MAX_FINISHED_JOBS.
+
+        Never evicts pending/running jobs. Relies on dict insertion order
+        (oldest jobs first).
+        """
+        finished = [j for j in self.jobs.values() if j.status in ("completed", "failed")]
+        excess = len(finished) - MAX_FINISHED_JOBS
+        for job in finished[:excess] if excess > 0 else []:
+            self.jobs.pop(job.id, None)
+
     def create(self, op: str, args: list[str]) -> Job:
-        """Create a new job entry.
+        """Create a new job entry, evicting old finished jobs first.
 
         Args:
             op: Operation name (must be in ALLOWED_OPS)
@@ -61,6 +171,7 @@ class JobRegistry:
         Returns:
             Created Job instance
         """
+        self._evict_finished()
         job_id = uuid.uuid4().hex[:12]
         job = Job(id=job_id, op=op, args=args)
         self.jobs[job_id] = job
@@ -120,6 +231,8 @@ def _build_command(op: str, args: list[str]) -> list[str]:
         "compile": "agent_vault.compiler",
         "promote": "agent_vault.promote",
         "reclassify_apply": "agent_vault.reclassify_apply",
+        "lint": "agent_vault.lint",
+        "compact": "agent_vault.compact",
     }
 
     module = module_map.get(op)
@@ -171,17 +284,20 @@ async def run_job(job: Job, vault_path: Path) -> None:
 
         job.proc = proc
 
-        # Capture stdout and decode manually
-        if proc.stdout:
-            async for raw_line in proc.stdout:
-                line = raw_line.decode(errors="replace").rstrip("\n")
-                job.stdout.append(line)
+        async def _drain(stream: asyncio.StreamReader | None, sink) -> None:
+            """Read one pipe line-by-line to EOF, decoding as we go."""
+            if stream is None:
+                return
+            async for raw_line in stream:
+                sink(raw_line.decode(errors="replace").rstrip("\n"))
 
-        # Capture stderr and decode manually
-        if proc.stderr:
-            async for raw_line in proc.stderr:
-                line = raw_line.decode(errors="replace").rstrip("\n")
-                job.stderr.append(line)
+        # Drain BOTH pipes concurrently. Reading them sequentially deadlocks:
+        # a child that fills the stderr pipe buffer (~64KB) blocks writing
+        # while we block reading stdout to EOF — neither side progresses.
+        await asyncio.gather(
+            _drain(proc.stdout, job.add_stdout),
+            _drain(proc.stderr, job.add_stderr),
+        )
 
         # Wait for process completion
         await proc.wait()
@@ -190,7 +306,7 @@ async def run_job(job: Job, vault_path: Path) -> None:
 
     except Exception as e:
         # Handle any subprocess errors
-        job.stderr.append(f"Job failed: {type(e).__name__}: {e}")
+        job.add_stderr(f"Job failed: {type(e).__name__}: {e}")
         job.returncode = job.returncode if job.returncode is not None else -1
         job.status = "failed"
 
@@ -219,7 +335,8 @@ async def run_job_endpoint(
         JSON response with job_id and initial status
 
     Raises:
-        HTTPException: 422 if operation not in allowlist
+        HTTPException: 422 if operation not in allowlist, 400 if any arg
+            is outside the per-op flag/value allowlist
     """
     # Validate operation against allowlist
     if request.op not in ALLOWED_OPS:
@@ -227,6 +344,9 @@ async def run_job_endpoint(
             status_code=422,
             detail=f"Operation {request.op!r} not allowed. Must be one of: {sorted(ALLOWED_OPS)}"
         )
+
+    # Validate args against the per-op allowlist (raises 400)
+    validate_args(request.op, request.args)
 
     registry = get_registry()
     job = registry.create(request.op, request.args)
@@ -265,8 +385,8 @@ async def get_job_status(job_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
     # Return last 100 lines of stdout/stderr to avoid huge responses
-    stdout_tail = job.stdout[-100:] if job.stdout else []
-    stderr_tail = job.stderr[-100:] if job.stderr else []
+    stdout_tail = list(job.stdout)[-100:]
+    stderr_tail = list(job.stderr)[-100:]
 
     return JSONResponse(
         content={
@@ -303,32 +423,43 @@ async def stream_job(job_id: str, request: Request) -> SSEEventSourceResponse:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
     async def event_generator() -> AsyncIterable[dict[str, str]]:
-        """Generate SSE events for job progress."""
-        last_stdout_len = 0
-        last_stderr_len = 0
+        """Generate SSE events for job progress.
+
+        Tracks the all-time line counters (stdout_seen/stderr_seen) rather than
+        buffer length: the buffers are bounded deques, so counting evicted
+        lines by len() alone would miss output on very chatty jobs.
+        """
+        last_stdout_seen = 0
+        last_stderr_seen = 0
 
         while True:
             # Check if client disconnected
             if await request.is_disconnected():
                 break
 
-            # Yield new stdout lines
-            if len(job.stdout) > last_stdout_len:
-                for line in job.stdout[last_stdout_len:]:
+            # Yield new stdout lines (bounded by what's still buffered).
+            # Snapshot counter + buffer before yielding: each yield suspends
+            # this coroutine, so the job task may append more lines meanwhile.
+            seen = job.stdout_seen
+            if seen > last_stdout_seen:
+                buf = list(job.stdout)
+                for line in buf[-min(seen - last_stdout_seen, len(buf)):]:
                     yield {
                         "event": "stdout",
                         "data": line,
                     }
-                last_stdout_len = len(job.stdout)
+                last_stdout_seen = seen
 
-            # Yield new stderr lines
-            if len(job.stderr) > last_stderr_len:
-                for line in job.stderr[last_stderr_len:]:
+            # Yield new stderr lines (same snapshot discipline)
+            seen = job.stderr_seen
+            if seen > last_stderr_seen:
+                buf = list(job.stderr)
+                for line in buf[-min(seen - last_stderr_seen, len(buf)):]:
                     yield {
                         "event": "stderr",
                         "data": line,
                     }
-                last_stderr_len = len(job.stderr)
+                last_stderr_seen = seen
 
             # Check if job is terminal
             if job.status in ("completed", "failed"):

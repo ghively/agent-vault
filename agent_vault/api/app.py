@@ -17,6 +17,8 @@ from agent_vault.api import jobs
 from agent_vault.api import reads
 from agent_vault.api import review
 from agent_vault.api import settings as settings_api
+from agent_vault.api import status as status_api
+from agent_vault.api import vault_config
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -38,9 +40,11 @@ def create_app(settings: Settings) -> FastAPI:
     )
     app.state.settings = settings
 
-    @app.get("/api/health", dependencies=api_deps)
+    # Deliberately unauthenticated: LB/orchestrator liveness probes can't send
+    # a bearer token. Returns liveness only — no vault data.
+    @app.get("/api/health")
     def health() -> JSONResponse:
-        """Health check."""
+        """Health check (open — liveness info only)."""
         return JSONResponse(content={"ok": True})
 
     # /api routers — original per-include registration (prefix=/api) + auth dep.
@@ -50,6 +54,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(jobs.router, prefix="/api", dependencies=api_deps)
     app.include_router(history.router, prefix="/api", dependencies=api_deps)
     app.include_router(settings_api.router, prefix="/api", dependencies=api_deps)
+    app.include_router(status_api.router, prefix="/api", dependencies=api_deps)
+    app.include_router(vault_config.router, prefix="/api", dependencies=api_deps)
 
     # Serve the built vault UI (web/dist) when present — open (no auth) so a
     # browser can load it; the UI's token gate handles /api authorization.

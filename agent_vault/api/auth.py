@@ -6,6 +6,7 @@ Authorization: Bearer <token>. If VAULT_TOKEN is empty, auth is disabled.
 
 from __future__ import annotations
 
+import secrets
 from typing import Annotated
 
 from fastapi import HTTPException, Security, status
@@ -48,7 +49,11 @@ def create_auth_dependency(token: str) -> Callable[[], None]:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        if credentials.credentials != token:
+        # Constant-time comparison — a plain != short-circuits on the first
+        # differing byte, leaking token prefixes through response timing.
+        if not secrets.compare_digest(
+            credentials.credentials.encode("utf-8"), token.encode("utf-8")
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authorization token",

@@ -32,39 +32,62 @@ def test_health_endpoint_with_valid_token():
 
 
 def test_health_endpoint_with_missing_token():
-    """Test /api/health returns 401 when token is configured but not provided."""
+    """Test /api/health returns 200 without a token — it's an unauthenticated
+    liveness probe (LB/orchestrator checks can't send bearer tokens)."""
     settings = Settings(host="127.0.0.1", port=7778, vault_path=".", token="test-token")
     app = create_app(settings)
     client = TestClient(app)
 
     response = client.get("/api/health")
+    assert response.status_code == 200
+    # Liveness info only — no vault data leaks through the open endpoint
+    assert response.json() == {"ok": True}
+
+
+def test_protected_endpoint_with_missing_token():
+    """Test protected /api routes return 401 when token is configured but absent."""
+    settings = Settings(host="127.0.0.1", port=7778, vault_path=".", token="test-token")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/api/entities")
     assert response.status_code == 401
     assert "detail" in response.json()
 
 
-def test_health_endpoint_with_wrong_token():
-    """Test /api/health returns 401 when wrong token is provided."""
+def test_protected_endpoint_with_wrong_token():
+    """Test protected /api routes return 401 when wrong token is provided."""
     settings = Settings(host="127.0.0.1", port=7778, vault_path=".", token="correct-token")
     app = create_app(settings)
     client = TestClient(app)
 
-    response = client.get("/api/health", headers={"Authorization": "Bearer wrong-token"})
+    response = client.get("/api/entities", headers={"Authorization": "Bearer wrong-token"})
     assert response.status_code == 401
     assert "detail" in response.json()
 
 
-def test_health_endpoint_with_malformed_auth():
-    """Test /api/health returns 401 when Authorization header is malformed."""
+def test_protected_endpoint_with_valid_token():
+    """Test protected /api routes accept the correct token."""
+    settings = Settings(host="127.0.0.1", port=7778, vault_path=".", token="correct-token")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/api/entities", headers={"Authorization": "Bearer correct-token"})
+    assert response.status_code == 200
+
+
+def test_protected_endpoint_with_malformed_auth():
+    """Test protected /api routes return 401 for malformed Authorization headers."""
     settings = Settings(host="127.0.0.1", port=7778, vault_path=".", token="test-token")
     app = create_app(settings)
     client = TestClient(app)
 
     # Missing "Bearer " prefix
-    response = client.get("/api/health", headers={"Authorization": "test-token"})
+    response = client.get("/api/entities", headers={"Authorization": "test-token"})
     assert response.status_code == 401
 
     # Wrong scheme
-    response = client.get("/api/health", headers={"Authorization": "Basic test-token"})
+    response = client.get("/api/entities", headers={"Authorization": "Basic test-token"})
     assert response.status_code == 401
 
 

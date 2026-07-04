@@ -44,6 +44,14 @@ def test_openapi_phase2_routes() -> None:
     assert "/api/runs" in paths
     assert "/api/ledgers" in paths
 
+    # Dashboard + query routing
+    assert "/api/status" in paths
+    assert "/api/ask" in paths
+
+    # Runtime config
+    assert "/api/config" in paths
+    assert "/api/config/apply" in paths
+
 
 def test_openapi_schema_metadata() -> None:
     """Verify OpenAPI metadata is set correctly."""
