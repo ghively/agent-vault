@@ -320,6 +320,16 @@ export OLLAMA_HOST=http://localhost:11434
 export OLLAMA_MODEL=qwen2.5:7b-instruct
 ```
 
+The Ollama client's sampling/runtime and resilience knobs are **config, not
+code** (same ethos as `OLLAMA_HOST`/`OLLAMA_MODEL`) — all optional:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `OLLAMA_TEMPERATURE` | `0.2` | Sampling temperature; low for faithful, low-variance prose. |
+| `OLLAMA_NUM_CTX` | `max(8192, ⌈(total_source_chars+4000)/3.5⌉)` | Context window. The default tracks `AGENT_VAULT_TOTAL_SOURCE_CHARS`, so raising the source budget for a big-context model isn't silently truncated by Ollama at 8192. |
+| `OLLAMA_RETRIES` | `2` | Extra attempts on a **transient** connection/timeout fault (HTTP 4xx/5xx and bad JSON are never retried). The weekly cadence is the only LLM pass, so a momentary Ollama restart shouldn't drop entities until next week. |
+| `OLLAMA_RETRY_BACKOFF_S` | `1.0` | Linear backoff base between retries. |
+
 To run fully offline / in CI, use the deterministic mock client:
 
 ```

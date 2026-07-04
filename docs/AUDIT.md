@@ -198,9 +198,38 @@ surface are what matter.)
 - **No metrics/observability.** Only `uvicorn` request logs; no `/metrics`, no
   structured logging, no counters — thin for a service several agents depend on.
 - **Doc drift:** `AGENTS.md` claims `OllamaClient` "has none [no test coverage]",
-  but `tests/test_ollama_client.py` (162 lines) covers its parsing/error paths
-  against a mocked transport (only a *live* server is, correctly, unexercised).
+  but `tests/test_ollama_client.py` covers its parsing/error paths against a
+  mocked transport (only a *live* server is, correctly, unexercised).
   `DOCS.md §2` is right; `AGENTS.md` is stale — reconcile.
+
+### 2.5 Built-in agent (compiler) hardening — ✅ done
+
+The single LLM touchpoint (`compiler.py`, the local-model "agent") got a
+pure-code optimization pass — **no prompt/proposal-shape change, so
+`PROMPT_CONTRACT_VERSION` stays 2.0** and the invariant is untouched:
+
+- **Resilience:** `OllamaClient` now has bounded retry on *transient*
+  connection/timeout faults only (the weekly cadence is the one LLM pass, so a
+  momentary Ollama restart no longer silently drops entities); HTTP status
+  errors and bad JSON surface clearly and are *not* retried; an Ollama `error`
+  field (HTTP 200 model-not-found etc.) is surfaced verbatim; the response read
+  is byte-capped.
+- **Config-not-code:** `temperature`, `num_ctx`, retry count/backoff are env
+  knobs; `num_ctx` now defaults to cover the whole source-char budget so raising
+  `AGENT_VAULT_TOTAL_SOURCE_CHARS` for a big-context model isn't silently
+  truncated at 8192.
+- **Correctness:** guarded the empty-`sources_hash` recompile loop (a compiled
+  entity missing its hash was treated as drifted *forever*, re-appending
+  proposals and burning tokens every pass); proposals are now parsed only from
+  the region after `</prose>` so prose quoting `<proposals>` can't mis-slice and
+  drop a real proposal set; fixed the one bare `open().read()` fd leak in
+  `find_pending`.
+- **Coverage:** added tests for parse-response slicing, the drift guard, retry/
+  HTTP-error/`error`-field paths, and env-configurable options.
+
+_Still open (deferred, needs a contract bump): cross-source shingle dedup and
+trimming the proposal scaffold in the system prompt — isolated for a future
+`PROMPT_CONTRACT_VERSION` 2.1 so the audit trail stays clean._
 
 ---
 
@@ -318,8 +347,9 @@ then the read/write interface agents actually need, then operational maturity.
    `_compile_all_locked` under the held lock; real-path regression test added).
 2. ~~**D2** (job task GC + `_runs.jsonl` recording)~~ — ✅ **done** (strong task
    ref + `finally` run-history append; four tests). Durable job *registry* still open.
-3. **O4·1** (full-text search over prose) — the single biggest lift to how well
-   agents can *read* the wiki; unblocks O4·2/O4·3.
+3. ~~**O4·1** (full-text search over prose)~~ — ✅ **done** (`agent_vault/search.py`:
+   FTS5 sidecar, bm25 ranking, prose-aware, metadata fallback; `GET /api/search`;
+   ranked `synapse find`). Unblocks O4·2/O4·3.
 4. **O1** (MCP server) — the native surface for a fleet of agents to read and
    write; wraps the existing service, no new invariant.
 5. **O5 + O6** (agent write path with attribution + per-agent identity/scoping) —
