@@ -9,15 +9,21 @@ AskResponse).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
 
 from agent_vault.api.config import Settings
 from agent_vault.api.history import read_jsonl
 from agent_vault.api.reads import load_index
-from agent_vault.synapse import days_until, norm
+from agent_vault import synapse as _synapse
+
+# agent_vault.synapse is legacy-untyped (mypy override) — cast its two pure
+# helpers to typed callables so this strict module can use them.
+days_until = cast(Callable[[Any], "int | None"], _synapse.days_until)
+norm = cast(Callable[[Any], str], _synapse.norm)
 
 router = APIRouter()
 

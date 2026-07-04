@@ -66,13 +66,28 @@ def norm(s):
 
 
 def resolve_query_to_slug(q, ents, aliases):
-    """Map a free-text query to a slug via aliases, exact match, then substring."""
+    """Map a free-text query to a slug via aliases, exact match, then substring.
+    Substring matching runs against slugs/titles/aliases (_match): a UNIQUE
+    match wins; an ambiguous one fails with the candidates listed on stderr."""
     nq = norm(q)
+    if not nq:
+        return None
     if nq in aliases:
         return aliases[nq]
     for e in ents:
         if nq == e.get("slug", "").lower() or nq in e.get("_match", []):
             return e["slug"]
+    partial = []
+    for e in ents:
+        hay = [str(e.get("slug", "")).lower(), *e.get("_match", [])]
+        if any(nq in h for h in hay if h):
+            partial.append(e)
+    if len(partial) == 1:
+        return partial[0]["slug"]
+    if len(partial) > 1:
+        cands = ", ".join(sorted(e["slug"] for e in partial)[:8])
+        print(f"'{q}' is ambiguous — {len(partial)} entities match by "
+              f"substring: {cands}", file=sys.stderr)
     return None
 
 
@@ -211,10 +226,9 @@ def cmd_resolve(args, ents, aliases):
         print(f"{e['slug']}: credential_ref is unreadable", file=sys.stderr)
         return
 
-    # Import the resolver package from the vault (it lives at <vault>/resolvers).
-    vpath = os.path.abspath(VAULT)
-    if vpath not in sys.path:
-        sys.path.insert(0, vpath)
+    # Import the resolver package shipped with agent_vault (agent_vault/resolvers/).
+    # It is CODE and ships with the package — never imported from the vault
+    # DATA dir (putting the vault on sys.path is a code-execution hazard).
     try:
         from . import resolvers
     except ImportError as ex:
@@ -242,7 +256,6 @@ def cmd_list(args, ents, aliases):
 def cmd_compact(args, ents, aliases):
     """Bound the append-only discovery logs (proposals/promoted) without changing
     any promotion outcome. Dry-run unless --apply is passed."""
-    sys.path.insert(0, os.path.abspath(VAULT))
     from . import compact
     apply = "--apply" in args
     results = compact.compact_vault(VAULT, apply=apply)

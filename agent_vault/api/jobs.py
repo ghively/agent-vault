@@ -13,7 +13,7 @@ import re
 import sys
 import uuid
 from collections import deque
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -284,7 +284,7 @@ async def run_job(job: Job, vault_path: Path) -> None:
 
         job.proc = proc
 
-        async def _drain(stream: asyncio.StreamReader | None, sink) -> None:
+        async def _drain(stream: asyncio.StreamReader | None, sink: Callable[[str], None]) -> None:
             """Read one pipe line-by-line to EOF, decoding as we go."""
             if stream is None:
                 return

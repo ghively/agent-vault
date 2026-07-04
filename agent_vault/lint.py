@@ -258,7 +258,11 @@ def check_stuck_reclassify(vault, aging_days):
 
 
 def check_manifest_drift(vault):
-    """raw/ files not in the manifest (= ingest hasn't seen them yet)."""
+    """raw/ files not in the manifest (= ingest hasn't seen them yet).
+
+    Every manifest record counts as "seen", including kind:"duplicate"
+    entries (same content ingested earlier at another path) and
+    kind:"oversize"/"error" skips — ingest HAS processed those paths."""
     issues = []
     manifest = load_manifest(vault)
     manifest_paths = {r.get("path") for r in manifest}

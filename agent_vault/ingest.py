@@ -50,10 +50,9 @@ except Exception:
     def vault_lock(_v):
         return nullcontext()
 
-try:
-    import secret_scan          # spec §7 write-side guard; shipped alongside
-except ImportError:             # degrade to no-op if somehow absent
-    secret_scan = None
+# spec §7 write-side guard; ships as part of this package. Imported loudly —
+# a silently-absent guard would let secret-shaped values ride into stub fields.
+from . import secret_scan  # noqa: E402  (after the stdout/yaml guards above)
 
 
 # --- defaults / paths -------------------------------------------------------
@@ -149,13 +148,18 @@ def extract_pdf(path):
         import pdfplumber
     except ImportError:
         return {"text": "", "meta": {"warn": "pdfplumber not installed"}}
-    text_parts = []
-    with pdfplumber.open(path) as p:
-        for page in p.pages:
-            t = page.extract_text() or ""
-            if t:
-                text_parts.append(t)
-    return {"text": "\n".join(text_parts), "meta": {"pages": len(text_parts)}}
+    # Degrade to empty text on a corrupt/unreadable PDF, matching the
+    # docx/xlsx/html posture — a malformed file must never crash a run.
+    try:
+        text_parts = []
+        with pdfplumber.open(path) as p:
+            for page in p.pages:
+                t = page.extract_text() or ""
+                if t:
+                    text_parts.append(t)
+        return {"text": "\n".join(text_parts), "meta": {"pages": len(text_parts)}}
+    except Exception as e:
+        return {"text": "", "meta": {"warn": f"pdf extract failed: {e}"}}
 
 
 def extract_text(path):
@@ -179,6 +183,7 @@ def extract_email(path):
         msg = email.message_from_bytes(f.read(), policy=email.policy.default)
     headers = {k: str(msg[k]) for k in ("From", "To", "Subject", "Date") if msg[k]}
     body_parts = []
+    html_parts = []
     attachments = []
     for part in msg.walk():
         cd = str(part.get("Content-Disposition", ""))
@@ -197,6 +202,19 @@ def extract_email(path):
         elif ctype == "text/plain":
             try:
                 body_parts.append(part.get_content())
+            except Exception:
+                pass
+        elif ctype == "text/html":
+            try:
+                html_parts.append(part.get_content())
+            except Exception:
+                pass
+    if not body_parts and html_parts:
+        # HTML-only email: no text/plain alternative exists, so extract the
+        # visible text from the HTML body instead of losing it entirely.
+        for hp in html_parts:
+            try:
+                body_parts.append(_HTMLTextExtractor().feed(hp))
             except Exception:
                 pass
     text = "\n".join([f"From: {headers.get('From','')}",
@@ -871,21 +889,20 @@ def render_stub(stub):
 
 
 def _yaml_str(s):
-    """Quote a YAML scalar when YAML would otherwise misparse it. Conservative:
-    flags leading-special chars (-, ?, !, %, &, *, |, >, @, `), special interior
-    chars (:, #, [, ], {, }), and surrounding whitespace; falls back to JSON
-    quoting so embedded quotes/backslashes are escaped properly. Aligned with
-    collections_importer._yaml_quote — same rules in both writers."""
+    """Quote a YAML scalar whenever yaml.safe_load would NOT read the plain
+    emission back as the identical string. The round-trip check covers both
+    structural misparses (leading `-`, interior `: `/`#`, flow chars) and
+    silent retyping — "1984" -> int, "no" -> False, "0234" -> octal 156,
+    "2026-01-05" -> date. Falls back to JSON quoting so embedded quotes,
+    backslashes and newlines are escaped properly. Aligned with
+    collections_importer._yaml_quote — same rule in both writers."""
     s = str(s)
-    if s == "":
-        return '""'
-    if s != s.strip():
-        return json.dumps(s)
-    if s[0] in "-?!%&*|>@`'\"" or s.startswith(("- ", "? ", ": ")):
-        return json.dumps(s)
-    if re.search(r"[:#\[\]{}\n]", s):
-        return json.dumps(s)
-    return s
+    try:
+        if yaml.safe_load("k: " + s) == {"k": s}:
+            return s
+    except yaml.YAMLError:
+        pass
+    return json.dumps(s)
 
 
 def resolve_stub_path(vault, stub, reserved=None):
@@ -1384,6 +1401,14 @@ def _ingest_locked(vault):
     # .get(): a hand-edited or foreign manifest record without a hash must not
     # abort the whole run.
     seen_hashes = {m.get("hash") for m in manifest if m.get("hash")}
+    # Paths the manifest already accounts for (any kind), plus the first path
+    # each hash was ingested under, so a duplicate at a second path can get its
+    # own manifest entry pointing at the original.
+    seen_paths = {m.get("path") for m in manifest if m.get("path")}
+    hash_to_path = {}
+    for m in manifest:
+        if m.get("hash") and m.get("path") and m["hash"] not in hash_to_path:
+            hash_to_path[m["hash"]] = m["path"]
 
     today = datetime.date.today().isoformat()
     summary = {"new": 0, "skipped": 0, "stubs": [], "review": [], "unknown": [],
@@ -1391,26 +1416,40 @@ def _ingest_locked(vault):
 
     for path in iter_raw_files(vault):
         rel = os.path.relpath(path, vault).replace("\\", "/")
-        try:
-            h = sha256_file(path)
-        except OSError as e:
-            summary.setdefault("errors", []).append((rel, f"hash failed: {e}"))
-            continue
-        if h in seen_hashes:
-            summary["skipped"] += 1
-            continue
-        # Size guard: skip + record oversized files rather than risk OOM.
+        # Size guard BEFORE hashing: hashing streams the whole file, so an
+        # oversized file must be rejected on cheap metadata alone.
         try:
             size = os.path.getsize(path)
         except OSError:
             size = 0
         if size > MAX_RAW_BYTES:
-            append_manifest(vault, {"path": rel, "hash": h, "kind": "oversize",
+            if rel in seen_paths:
+                summary["skipped"] += 1  # already recorded on a prior run
+                continue
+            append_manifest(vault, {"path": rel, "hash": None, "kind": "oversize",
                                     "ingested": today, "stubs": [],
                                     "error": f"skipped: {size} bytes > "
                                              f"{MAX_RAW_BYTES} cap"})
-            seen_hashes.add(h)
+            seen_paths.add(rel)
             summary.setdefault("errors", []).append((rel, f"oversize {size}B (skipped)"))
+            continue
+        try:
+            h = sha256_file(path)
+        except OSError as e:
+            # No manifest entry on purpose: a transient read failure SHOULD be
+            # retried on the next run (see main()'s error message).
+            summary.setdefault("errors", []).append((rel, f"hash failed: {e}"))
+            continue
+        if h in seen_hashes:
+            if rel not in seen_paths:
+                # Same content at a SECOND path: record it so lint's
+                # check_manifest_drift doesn't flag the copy forever.
+                append_manifest(vault, {"path": rel, "hash": h,
+                                        "kind": "duplicate", "ingested": today,
+                                        "stubs": [],
+                                        "duplicate_of": hash_to_path.get(h)})
+                seen_paths.add(rel)
+            summary["skipped"] += 1
             continue
         try:
             _ingest_one_file(vault, path, rel, h, kind_today=today,
@@ -1418,6 +1457,8 @@ def _ingest_locked(vault):
                              gated_types=gated_types,
                              learned_mappings=learned_field_mappings)
             seen_hashes.add(h)
+            seen_paths.add(rel)
+            hash_to_path.setdefault(h, rel)
         except Exception as e:
             # A poison file must not abort the whole run (and must not be
             # retried forever): record an error manifest entry and move on.
@@ -1425,6 +1466,8 @@ def _ingest_locked(vault):
                                     "ingested": today, "stubs": [],
                                     "error": f"{type(e).__name__}: {e}"})
             seen_hashes.add(h)
+            seen_paths.add(rel)
+            hash_to_path.setdefault(h, rel)
             summary.setdefault("errors", []).append((rel, f"{type(e).__name__}: {e}"))
     # Final pass: backfill needs-review stubs for any related: targets that
     # don't yet exist as entity files. This keeps the link graph closed and
@@ -1541,8 +1584,8 @@ def _extract_inmemory(data, kind):
         try:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as p:
-                txt = "\n".join((page.extract_text() or "") for page in p.pages)
-            return txt, {"pages": len(txt.splitlines())}
+                pages = [(page.extract_text() or "") for page in p.pages]
+            return "\n".join(pages), {"pages": len(pages)}
         except Exception as e:
             return "", {"warn": f"pdf in-memory extract failed: {e}"}
     if kind == "text":
@@ -1670,7 +1713,6 @@ def _make_title(classification, fields, subject):
 def refresh_index(vault):
     """Run build_index.main() in-process so we don't shell out."""
     try:
-        sys.path.insert(0, vault)
         from . import build_index
         # build_index uses sys.argv[1] for vault; emulate.
         saved = sys.argv[:]
@@ -1709,8 +1751,9 @@ def main():
         for t, slug in s["inferred"]:
             print(f"    needs-review  {t}/{slug}")
     if s.get("errors"):
-        print(f"\n  errors ({len(s['errors'])}) — recorded in raw/_manifest.jsonl, "
-              "will not be retried:", file=sys.stderr)
+        print(f"\n  errors ({len(s['errors'])}) — poison/oversize files are "
+              "recorded in raw/_manifest.jsonl and not retried; hash/read "
+              "failures are retried next run:", file=sys.stderr)
         for rel, err in s["errors"]:
             print(f"    {rel}: {err}", file=sys.stderr)
     print()
