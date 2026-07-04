@@ -166,30 +166,14 @@ async def list_entities(
     return {"rows": rows, "total": len(load_index(vault))}
 
 
-@router.get("/entities/{slug}")
-def get_entity(
-    slug: str,
-    s: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    """Get full entity record with resolved markdown body.
+def build_entity_detail(vault: Path, slug: str, path: Path) -> dict[str, Any]:
+    """Build the full entity-detail dict served by GET /api/entities/{slug}.
 
-    Args:
-        slug: Entity slug
-        s: Settings (dependency injected)
-
-    Returns:
-        Full entity dict with prose, sources, facts, links
-
-    Raises:
-        HTTPException: 404 if entity not found
+    Shared with the edit endpoints (edit.py) so a PATCH response is
+    byte-compatible with a subsequent GET.
     """
-    vault = Path(s.vault_path)
     by_slug = {e["slug"]: e for e in load_index(vault) if e.get("slug")}
-    rec = by_slug.get(slug)
-    if not rec or not rec.get("path"):
-        raise HTTPException(status_code=404, detail="entity not found")
-
-    parsed = parse_entity_file(vault / rec["path"])
+    parsed = parse_entity_file(path)
     fm = parsed.get("frontmatter", {})
 
     # Resolve links
@@ -218,7 +202,36 @@ def get_entity(
         "sources": fm.get("sources", []),
         "facts": build_facts(fm),
         "links": links,
+        # Editable fields surfaced verbatim so the edit UI prefills from the
+        # authoritative source rather than the entities-list row.
+        "tags": [str(t) for t in fm.get("tags") or [] if t is not None],
+        "notes": "" if fm.get("notes") is None else str(fm.get("notes")),
     }
+
+
+@router.get("/entities/{slug}")
+def get_entity(
+    slug: str,
+    s: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Get full entity record with resolved markdown body.
+
+    Args:
+        slug: Entity slug
+        s: Settings (dependency injected)
+
+    Returns:
+        Full entity dict with prose, sources, facts, links
+
+    Raises:
+        HTTPException: 404 if entity not found
+    """
+    vault = Path(s.vault_path)
+    by_slug = {e["slug"]: e for e in load_index(vault) if e.get("slug")}
+    rec = by_slug.get(slug)
+    if not rec or not rec.get("path"):
+        raise HTTPException(status_code=404, detail="entity not found")
+    return build_entity_detail(vault, slug, vault / rec["path"])
 
 
 @router.get("/review/proposals")

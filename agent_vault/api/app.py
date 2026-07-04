@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from agent_vault.api.auth import create_auth_dependency
 from agent_vault.api.config import Settings
 from agent_vault.api import creds
+from agent_vault.api import edit
 from agent_vault.api import history
 from agent_vault.api import jobs
 from agent_vault.api import reads
@@ -50,6 +51,7 @@ def create_app(settings: Settings) -> FastAPI:
     # /api routers — original per-include registration (prefix=/api) + auth dep.
     app.include_router(reads.router, prefix="/api", dependencies=api_deps)
     app.include_router(creds.router, prefix="/api", dependencies=api_deps)
+    app.include_router(edit.router, prefix="/api", dependencies=api_deps)
     app.include_router(review.router, prefix="/api", dependencies=api_deps)
     app.include_router(jobs.router, prefix="/api", dependencies=api_deps)
     app.include_router(history.router, prefix="/api", dependencies=api_deps)

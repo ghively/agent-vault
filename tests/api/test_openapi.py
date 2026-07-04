@@ -27,6 +27,14 @@ def test_openapi_phase2_routes() -> None:
     # Recompilation
     assert "/api/entities/{slug}/recompile" in paths
 
+    # Edit endpoints (schema picker, reclassify, PATCH, raw editor)
+    assert "/api/schema" in paths
+    assert "/api/entities/{slug}/reclassify" in paths
+    assert "patch" in paths["/api/entities/{slug}"]
+    assert "/api/entities/{slug}/raw" in paths
+    assert "get" in paths["/api/entities/{slug}/raw"]
+    assert "put" in paths["/api/entities/{slug}/raw"]
+
     # Review endpoints
     assert "/api/review/proposals" in paths
     assert "/api/review/proposals/{pid}/approve" in paths

@@ -7,9 +7,9 @@ HTTP surface — the boundary the web UI (`web/`, see [`../web/README.md`](../we
 and any external consumer (e.g. SynapseNAS) talk to.
 
 Source of truth: `agent_vault/api/app.py` (router wiring) + one module per
-concern under `agent_vault/api/`: `reads.py`, `creds.py`, `review.py`,
-`jobs.py`, `history.py`, `settings.py`, `status.py`, `vault_config.py`,
-`auth.py`, `config.py`.
+concern under `agent_vault/api/`: `reads.py`, `creds.py`, `edit.py`,
+`review.py`, `jobs.py`, `history.py`, `settings.py`, `status.py`,
+`vault_config.py`, `auth.py`, `config.py`.
 
 ## Starting the service
 
@@ -78,6 +78,11 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | GET | `/api/health` | no | Liveness check → `{"ok": true}` (open so LB/orchestrator probes work; liveness info only) |
 | GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters |
 | GET | `/api/entities/{slug}` | yes* | Full entity record: prose, facts, sources, resolved links |
+| PATCH | `/api/entities/{slug}` | yes* | Edit only `title`/`tags`/`notes` frontmatter fields (line-targeted; validated + rolled back on failure) → same shape as `GET /api/entities/{slug}` |
+| GET | `/api/schema` | yes* | Vault taxonomy for UI pickers: `{"types": [{"type", "subtypes": [...]}], "tags": [...]}` (sorted, includes `unknown`) |
+| POST | `/api/entities/{slug}/reclassify` | yes* | Human-driven re-filing: body `{"to_type", "to_subtype", "reason"?}` — writes ledger records, then applies via `reclassify_apply` |
+| GET | `/api/entities/{slug}/raw` | yes* | Raw markdown: `{"path": "entities/<type>/<slug>.md", "content": "..."}` |
+| PUT | `/api/entities/{slug}/raw` | yes* | Replace the entire entity file (in-app raw editor). Body: `{"content": "..."}` → `{"ok": true, "path": ...}` |
 | POST | `/api/entities/{slug}/recompile` | yes* | Force one entity to `status: stub` and recompile it synchronously, under the vault write-lock |
 | GET | `/api/creds` | yes* | List credential references (metadata only — never secrets) |
 | POST | `/api/creds/{slug}/resolve` | yes* | Resolve an entity's `credential_ref` → `{"ok": true, "secret": "..."}`. The secret is never logged. |
@@ -158,6 +163,78 @@ type/subtype/tags/aliases). Response: `{"intent": "due"|"expiring"|"find",
   `registry/schema.yaml`'s `promotion:` block instead.
 - Response: the same shape as `GET /api/config`, re-read fresh.
 
+## Edit endpoints (`edit.py`)
+
+These five routes back the web UI's Review-screen reclassify, "Edit details"
+modal, and in-app raw markdown editor. All are auth-gated like every other
+`/api` route; every mutation runs under the vault-wide write lock and returns
+`503` on lock timeout. Slugs are validated against the same conservative
+pattern `creds.py` uses (`^[a-z0-9][a-z0-9._-]{0,127}$`; malformed → `422`),
+and entities are located by file (`entities/*/<slug>.md`), not the index —
+a slug found under two type dirs is an integrity conflict → `409`.
+
+`GET /api/schema` — the taxonomy for UI pickers, read fresh from
+`registry/schema.yaml` on every call:
+
+```jsonc
+{
+  "types": [ { "type": "asset", "subtypes": ["appliance", "electronics"] }, ... ],  // sorted; includes "unknown"; a type with an empty body → subtypes []
+  "tags": ["banking", "primary", ...]                                               // sorted tag names
+}
+```
+
+`POST /api/entities/{slug}/reclassify` with
+`{"to_type": str, "to_subtype": str, "reason"?: str}` — human-driven re-filing:
+
+- `404` unknown slug; `400` if `(to_type, to_subtype)` is not a valid pair in
+  `registry/schema.yaml` or equals the entity's current classification.
+- Otherwise appends two records to `discovery/promoted.jsonl` — a
+  `queue_for_review` reclassify record shaped exactly like `promote.py`'s
+  (identity `["reclassify", slug, to_type, to_subtype]`, `proposal` with
+  `from_entity`/`to_type`/`to_subtype`), provenance-marked
+  `origin`/`proposed_by: "human_review"`, plus a `review_approved` record the
+  way `review.cmd_approve` writes one — then delegates to
+  `reclassify_apply.apply_all(vault, only_slug=slug)`, the same
+  two-phase-commit apply step the CLI uses (file move, frontmatter rewrite,
+  cross-ref rewrite in other entities, `_index.json` rebuild — all under the
+  vault lock, which `apply_all` takes itself).
+- `200` → `{"slug", "from": "old_type/old_subtype", "to": "to_type/to_subtype",
+  "moved": bool, "refs_rewritten": int, "detail": str}`.
+- `409` with the apply step's reason when the reclassify could not be applied
+  (e.g. ambiguous slug, entity vanished mid-flight).
+
+`PATCH /api/entities/{slug}` with any subset of
+`{"title": str, "tags": [str], "notes": str}` — the "Edit details" modal:
+
+- `404` unknown slug; `400` for an empty body, unknown keys, a title that is
+  empty/multi-line/over 300 chars, or a tag not in `schema.yaml`'s `tags`
+  (the error lists the valid tags — same hard gate as `validate.py`).
+- Every new value is secret-scanned (`secret_scan.looks_like_secret`, the
+  strict tier `validate.py` uses) → `422` and nothing written.
+- The rewrite is line-targeted: only the `title:`/`tags:`/`notes:` frontmatter
+  lines change (ingest's `_yaml_str` quoting; `notes` is appended if absent);
+  every other byte, including prose, is preserved. Atomic write (tmp + fsync +
+  `os.replace`) under the vault lock, then `validate.validate_file` — on any
+  error the original content is restored and the response is `422` with
+  `{"message", "errors": [...]}`.
+- `200` → the same shape as `GET /api/entities/{slug}` (shared builder), and
+  the index is refreshed so list views stay current.
+
+`GET /api/entities/{slug}/raw` → `{"path": "entities/<type>/<slug>.md",
+"content": "<full file text>"}` — the raw editor's load.
+
+`PUT /api/entities/{slug}/raw` with `{"content": str}` replaces the whole file:
+
+- `404` unknown slug; `400` if content is empty, over 1MB, or doesn't parse as
+  the `---\n<yaml>\n---\n<body>` frontmatter shape; `400` if the frontmatter's
+  `slug` doesn't match the filename or `type` doesn't match the directory —
+  renames/moves are the reclassify endpoint's job, not the raw editor's.
+- All frontmatter values (and comment lines) are secret-scanned as in
+  `validate.py` → `422`, nothing written.
+- Atomic write under the vault lock, then `validate.validate_file`; on failure
+  the original is restored → `422` with `{"message", "errors": [...]}`.
+- `200` → `{"ok": true, "path": "entities/<type>/<slug>.md"}` (index refreshed).
+
 ## The jobs/SSE mechanism (how the web UI runs the pipeline)
 
 `POST /api/jobs/run` is how a browser triggers `ingest`/`compile`/`promote`/
@@ -214,7 +291,10 @@ see [`web/README.md`](../web/README.md) for the client side.
   ingests untrusted files) to `sys.path` — this prevents a crafted vault entity
   from achieving code execution via a module-name collision. Preserve this
   invariant in any code that touches vault-controlled paths.
-- Mutating endpoints (review approve/reject, recompile) acquire the vault-wide
-  advisory lock (`agent_vault/locking.py`) for their duration, the same lock
-  the CLI pipeline stages use — concurrent API calls and cadence runs won't
-  corrupt shared state.
+- Mutating endpoints (review approve/reject, recompile, reclassify, PATCH,
+  raw PUT) acquire the vault-wide advisory lock (`agent_vault/locking.py`) for
+  their duration, the same lock the CLI pipeline stages use — concurrent API
+  calls and cadence runs won't corrupt shared state. One nuance: the flock is
+  **not re-entrant in-process**, so `edit.py`'s reclassify endpoint releases
+  the lock before delegating to `reclassify_apply.apply_all`, which takes the
+  lock itself (same posture as `review.cmd_approve`).
