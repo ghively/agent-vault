@@ -396,9 +396,12 @@ Shipped backends (pick per ref by scheme) — all 9 modules under
 | `env` | `env://store/path` → `STORE_PATH` | — | dev / non-secret only |
 
 The CLI-based backends (`op`/`bw`/`pass`/`secret-tool`/`security`/`vault`) are
-tested against stub CLIs plus ref-parsing/security unit tests
-(`tests/test_resolvers.py`); `age` and `gpg` additionally get real
-encrypt→resolve round trips. None have been verified against live
+tested with ref-parsing/security unit tests (`tests/test_resolvers.py`) plus
+per-backend ref→argv mapping and mocked-`subprocess.run` argv/error tests
+(`tests/test_resolver_backends.py`); the env backend and the dispatcher's
+success/failure branches are in `tests/test_resolvers_env.py`. `age` and `gpg`
+additionally get real encrypt→resolve round trips (`tests/test_resolver_backends.py`,
+skipped where the binary isn't installed). None have been verified against live
 1Password/Bitwarden/Vault accounts yet.
 
 Auth is the operator's job (sign into `op`, unlock `bw`); the resolver just
