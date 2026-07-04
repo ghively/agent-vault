@@ -83,9 +83,9 @@ not a router library (there is none in `package.json`).
 |---|---|---|
 | `Vault.tsx` | Hub/landing screen; tiles that open the other apps (incl. Settings) | none — pure `openApp()` navigation |
 | `Browse.tsx` | Search/filter vault entities (input debounced ~250ms, previous results held as placeholder while refetching) | `GET /api/entities` |
-| `Wiki.tsx` | Read entity docs; trigger a **synchronous** per-entity recompile | `GET /api/entities[/:slug]`; `POST /api/entities/:slug/recompile` (returns the compile summary directly — no job/stream) |
+| `Wiki.tsx` | Read entity docs; trigger a **synchronous** per-entity recompile; edit title/tags/notes via the "Edit details" modal (`PATCH` — only the changed keys are sent; unknown tags → 400, secret-shaped values → 422, both rendered verbatim in the modal); edit the raw markdown file via "Open in editor" (`GET`/`PUT .../raw` — dirty buffers ask before discard; slug/type edits are rejected server-side, use Reclassify instead) | `GET /api/entities[/:slug]`; `POST /api/entities/:slug/recompile` (returns the compile summary directly — no job/stream); `PATCH /api/entities/:slug`; `GET`/`PUT /api/entities/:slug/raw`; `GET /api/schema` (valid-tag vocabulary) |
 | `Creds.tsx` | List credential references; reveal a secret after an explicit confirmation (the resolve endpoint uses the normal bearer token — no extra "re-auth" token exists) | `GET /api/creds`; `POST /api/creds/:slug/resolve` |
-| `Review.tsx` | Approve/reject queued proposals and needs-review entities (buttons disable while a mutation is in flight; failures render inline) | `GET /api/review/proposals\|entities`; `POST /api/review/{proposals,entities}/:id/{approve,reject}` |
+| `Review.tsx` | Approve/reject queued proposals and needs-review entities (buttons disable while a mutation is in flight; failures render inline); reclassify an entity via a modal dialog (type/subtype selects populated from the schema, Confirm disabled for an unchanged target; 400/409 render in the dialog, success shows "re-filed to X/Y, N refs rewritten" inline) | `GET /api/review/proposals\|entities`; `POST /api/review/{proposals,entities}/:id/{approve,reject}`; `GET /api/schema`; `POST /api/entities/:slug/reclassify` |
 | `Pipeline.tsx` | View run/ledger history; run the weekly cadence or a lint dry-run (see Jobs below) | `GET /api/runs`, `/api/ledgers`; `POST /api/jobs/run` + `GET /api/jobs/:id/stream` (SSE) |
 | `CommandDeck.tsx` | Natural-language "ask" query + status | `GET /api/ask?q=`, `GET /api/status` |
 | `Settings.tsx` | Show vault/service/compiler/resolver config; client UI prefs | `GET /api/settings` (direct fetch, not a hook) |
@@ -125,11 +125,19 @@ screens call into.
   permission-scoped error rather than a bad token).
 - `hooks.ts` — React Query hooks (`useEntities`, `useEntity`, `useCreds`,
   `useReviewProposals`, `useReviewEntities`, `useRuns`, `useLedgers`,
-  `useStatus`, `useAsk`, `useConfig`, …) wrapping `client.ts` calls.
+  `useStatus`, `useAsk`, `useConfig`, `useSchema` — the taxonomy+tags from
+  `GET /api/schema`, cached with a long `staleTime` — and `useEntityRaw`
+  for `GET /api/entities/:slug/raw`, …) wrapping `client.ts` calls.
 - `jobs.ts` — job-run + SSE-stream helpers (see above).
 - `mutations.ts` — React Query mutations for the review approve/reject
   actions (entity refs are `type/slug`; each segment is URI-encoded but the
-  `/` stays literal to match the backend's `{ref:path}` route) and
+  `/` stays literal to match the backend's `{ref:path}` route),
+  `useReclassifyEntity` (`POST /api/entities/:slug/reclassify` with
+  `{to_type, to_subtype, reason?}`; invalidates review/entities/status and
+  the entity's detail), `usePatchEntity` (`PATCH /api/entities/:slug` with
+  a subset of `{title, tags, notes}`; the response is the full updated
+  detail and is written straight into the `["entity", slug]` cache),
+  `useSaveEntityRaw` (`PUT /api/entities/:slug/raw` with `{content}`), and
   `useApplyConfig` (`POST /api/config/apply` with `{"env": {...}}`; the
   `thresholds` block is read-only server-side and rejected with 400).
 - `resolve.ts` — the credential-resolve call used by `Creds.tsx`
@@ -189,5 +197,6 @@ for a one-shot run (what CI does via `.github/workflows/ci.yml`'s
   literals. Former dead code (`App.tsx`, `MobileShell.tsx`/`useIsMobile.ts`,
   `TabbedApp.tsx`/`consolidation.ts`) has also been deleted — there is no
   mobile shell and no tabbed-window mode.
-- A few buttons are intentional stubs with "not implemented yet" tooltips:
-  Wiki's "Edit details"/"Open in editor" and Review's "Reclassify".
+- A few QuickPanel glyphs are intentional stubs with "not implemented yet"
+  tooltips. (Wiki's "Edit details"/"Open in editor" and Review's
+  "Reclassify" are now live — see the screens table above.)

@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEntities, useEntity } from "../api/hooks";
+import { useEntities, useEntity, useEntityRaw, useSchema } from "../api/hooks";
+import { usePatchEntity, useSaveEntityRaw } from "../api/mutations";
 import { recompileEntity } from "../api/jobs";
 import { C, FONT_MONO, FONT_UI } from "../theme";
-import type { EntityRow, FactRow, LinkRow } from "../api/types";
+import type { EntityDetail, EntityPatchBody, EntityRow, FactRow, LinkRow } from "../api/types";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -314,9 +315,26 @@ export function Wiki() {
   const [recompiling, setRecompiling] = useState(false);
   const [recompileSummary, setRecompileSummary] = useState<Record<string, unknown> | null>(null);
   const [recompileError, setRecompileError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const { data: detail, isLoading } = useEntity(detailSlug);
+
+  // Selecting another entity abandons any open editor for the previous one.
+  useEffect(() => {
+    setEditOpen(false);
+    setRawOpen(false);
+    setSavedNotice(null);
+  }, [detailSlug]);
+
+  // The "saved" indicator is deliberately brief.
+  useEffect(() => {
+    if (!savedNotice) return;
+    const t = setTimeout(() => setSavedNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [savedNotice]);
 
   // POST /api/entities/{slug}/recompile is SYNCHRONOUS: the response IS the
   // compile summary, so completion of the fetch is completion of the work.
@@ -362,7 +380,15 @@ export function Wiki() {
 
       {/* Right: entity page */}
       <div style={{ flex: 1, overflow: "auto", padding: "2px 8px 12px 0" }}>
-        {isLoading || !detail ? (
+        {rawOpen && detailSlug ? (
+          <RawEditorPane
+            slug={detailSlug}
+            onExit={(savedPath) => {
+              setRawOpen(false);
+              if (savedPath) setSavedNotice(`saved ${savedPath}`);
+            }}
+          />
+        ) : isLoading || !detail ? (
           <div style={{ color: C.dim, padding: 20 }}>
             {detailSlug ? "Loading…" : "Select an entity from the index."}
           </div>
@@ -573,8 +599,7 @@ export function Wiki() {
                     {recompiling ? "Recompiling…" : "Recompile"}
                   </button>
                   <button
-                    disabled
-                    title="not implemented yet"
+                    onClick={() => setEditOpen(true)}
                     style={{
                       fontSize: 12,
                       padding: "6px 14px",
@@ -582,16 +607,14 @@ export function Wiki() {
                       border: "1px solid rgba(0,255,0,0.3)",
                       background: "transparent",
                       color: C.text,
-                      cursor: "not-allowed",
+                      cursor: "pointer",
                       fontFamily: FONT_MONO,
-                      opacity: 0.45,
                     }}
                   >
                     Edit details
                   </button>
                   <button
-                    disabled
-                    title="not implemented yet"
+                    onClick={() => setRawOpen(true)}
                     style={{
                       fontSize: 12,
                       padding: "6px 14px",
@@ -599,14 +622,19 @@ export function Wiki() {
                       border: "1px solid rgba(0,255,0,0.3)",
                       background: "transparent",
                       color: C.text,
-                      cursor: "not-allowed",
+                      cursor: "pointer",
                       fontFamily: FONT_MONO,
-                      opacity: 0.45,
                     }}
                   >
                     Open in editor
                   </button>
                 </div>
+
+                {savedNotice && (
+                  <div style={{ marginTop: 12, color: C.greenSoft, fontSize: 12 }}>
+                    ✓ {savedNotice}
+                  </div>
+                )}
 
                 {/* recompile result panel */}
                 {recompileError && (
@@ -667,6 +695,381 @@ export function Wiki() {
           </>
         )}
       </div>
+
+      {editOpen && detail && (
+        <EditDetailsModal detail={detail} onClose={() => setEditOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+// ── Edit details modal ────────────────────────────────────────────────────────
+
+const EDIT_LABEL_STYLE: React.CSSProperties = {
+  display: "block",
+  color: C.dim,
+  fontSize: 11,
+  letterSpacing: 1,
+  marginBottom: 4,
+  textTransform: "uppercase",
+};
+
+const EDIT_INPUT_STYLE: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  background: "rgba(0,0,0,0.4)",
+  border: "1px solid rgba(0,255,0,0.3)",
+  borderRadius: 5,
+  color: C.text,
+  fontFamily: FONT_MONO,
+  fontSize: 12,
+  padding: "6px 9px",
+  outline: "none",
+};
+
+const tagsEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((t, i) => t === b[i]);
+
+function EditDetailsModal({ detail, onClose }: { detail: EntityDetail; onClose: () => void }) {
+  const { data: schema } = useSchema();
+  const { data: entitiesData } = useEntities();
+  const patch = usePatchEntity();
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  // The detail response does not reliably carry tags/notes today: fall back to
+  // the entities-list row for tags (EntityRow has them) and to a "notes" fact.
+  const rowTags = entitiesData?.rows.find((r) => r.slug === detail.slug)?.tags;
+  const [initial] = useState(() => ({
+    title: detail.title,
+    tags: detail.tags ?? rowTags ?? [],
+    notes: detail.notes ?? detail.facts.find((f) => f.k === "notes")?.v ?? "",
+  }));
+
+  const [title, setTitle] = useState(initial.title);
+  const [tags, setTags] = useState<string[]>(initial.tags);
+  const [notes, setNotes] = useState(initial.notes);
+
+  // Escape closes; initial focus on the title input (Creds modal conventions).
+  useEffect(() => {
+    titleRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const availableTags = (schema?.tags ?? []).filter((t) => !tags.includes(t));
+
+  // Only send the keys the user actually changed. A blank notes field means
+  // "leave unchanged" — the field may simply not have been prefillable.
+  const body: EntityPatchBody = {};
+  if (title !== initial.title) body.title = title;
+  if (!tagsEqual(tags, initial.tags)) body.tags = tags;
+  if (notes !== initial.notes && notes.trim() !== "") body.notes = notes;
+  const changed = Object.keys(body).length > 0;
+
+  const save = () => {
+    if (patch.isPending) return;
+    if (!changed) {
+      onClose();
+      return;
+    }
+    patch.mutate({ slug: detail.slug, body }, { onSuccess: () => onClose() });
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit details for ${detail.slug}`}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.75)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <div style={{
+        background: "#0a0a0a",
+        border: `1px solid ${C.cyan}`,
+        borderRadius: 8,
+        padding: "24px 28px",
+        minWidth: 380,
+        maxWidth: 520,
+        fontFamily: FONT_MONO,
+        color: C.text,
+        fontSize: 13,
+      }}>
+        <div style={{ color: C.cyan, fontSize: 13, letterSpacing: 1, marginBottom: 16 }}>
+          EDIT DETAILS · {detail.slug}
+        </div>
+
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <span style={EDIT_LABEL_STYLE}>title</span>
+          <input
+            ref={titleRef}
+            aria-label="title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            style={EDIT_INPUT_STYLE}
+          />
+        </label>
+
+        <div style={{ marginBottom: 12 }}>
+          <span style={EDIT_LABEL_STYLE}>tags</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+            {tags.map((t) => (
+              <span
+                key={t}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 11,
+                  color: C.greenSoft,
+                  border: "1px solid rgba(0,255,0,0.3)",
+                  borderRadius: 4,
+                  padding: "2px 7px",
+                }}
+              >
+                {t}
+                <button
+                  onClick={() => setTags(tags.filter((x) => x !== t))}
+                  aria-label={`remove tag ${t}`}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: C.dim,
+                    cursor: "pointer",
+                    fontFamily: FONT_MONO,
+                    fontSize: 11,
+                    padding: 0,
+                  }}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {tags.length === 0 && (
+              <span style={{ color: C.dim, fontSize: 11 }}>no tags</span>
+            )}
+          </div>
+          {/* Free text is rejected server-side (unknown tags → 400), so tags
+              can only be added from the registry vocabulary. */}
+          <select
+            aria-label="add tag"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) setTags([...tags, e.target.value]);
+            }}
+            disabled={availableTags.length === 0}
+            style={{ ...EDIT_INPUT_STYLE, opacity: availableTags.length === 0 ? 0.5 : 1 }}
+          >
+            <option value="">add tag…</option>
+            {availableTags.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        <label style={{ display: "block", marginBottom: 16 }}>
+          <span style={EDIT_LABEL_STYLE}>notes</span>
+          <textarea
+            aria-label="notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            placeholder="optional — blank leaves notes unchanged"
+            style={{ ...EDIT_INPUT_STYLE, resize: "vertical" }}
+          />
+        </label>
+
+        {patch.error != null && (
+          <div style={{ color: C.red, fontSize: 11.5, marginBottom: 12, whiteSpace: "pre-wrap" }}>
+            {patch.error instanceof Error ? patch.error.message : "request failed"}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "6px 16px",
+              borderRadius: 5,
+              border: `1px solid ${C.dim}`,
+              background: "transparent",
+              color: C.dim,
+              fontFamily: FONT_MONO,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={patch.isPending}
+            style={{
+              padding: "6px 16px",
+              borderRadius: 5,
+              border: `1px solid ${C.cyan}`,
+              background: "rgba(0,243,255,0.08)",
+              color: C.cyan,
+              fontFamily: FONT_MONO,
+              fontSize: 12,
+              cursor: patch.isPending ? "wait" : "pointer",
+              opacity: patch.isPending ? 0.55 : 1,
+            }}
+          >
+            {patch.isPending ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Raw editor pane ───────────────────────────────────────────────────────────
+
+function RawEditorPane({
+  slug,
+  onExit,
+}: {
+  slug: string;
+  /** savedPath is non-null when the exit follows a successful save. */
+  onExit: (savedPath: string | null) => void;
+}) {
+  const { data, isLoading, isError } = useEntityRaw(slug, true);
+  const save = useSaveEntityRaw();
+  const [content, setContent] = useState<string | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Seed the textarea once the file arrives.
+  useEffect(() => {
+    if (data && content === null) {
+      setContent(data.content);
+    }
+  }, [data, content]);
+
+  useEffect(() => {
+    if (data) taRef.current?.focus();
+  }, [data]);
+
+  const dirty = data != null && content !== null && content !== data.content;
+
+  const requestExit = useCallback(() => {
+    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+    onExit(null);
+  }, [dirty, onExit]);
+
+  // Escape exits (asking first when dirty).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") requestExit();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [requestExit]);
+
+  const doSave = () => {
+    if (content === null || save.isPending) return;
+    save.mutate({ slug, content }, { onSuccess: (res) => onExit(res.path) });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={SEC_STYLE}>Raw editor</span>
+        <span style={{ color: "#6fd4ff", fontSize: 12 }}>{data?.path ?? slug}</span>
+        {dirty && (
+          <span style={{ color: C.amber, fontSize: 11 }}>● unsaved changes</span>
+        )}
+      </div>
+      <div style={{ color: C.dim, fontSize: 11, marginBottom: 10 }}>
+        editing the entity file directly — slug/type edits are rejected; use Reclassify to move an entity
+      </div>
+
+      {isError && (
+        <div style={{ color: C.red, fontSize: 12 }}>
+          error — could not load the raw entity file
+        </div>
+      )}
+      {!isError && isLoading && (
+        <div style={{ color: C.dim, fontSize: 12 }}>loading file…</div>
+      )}
+
+      {!isError && data && (
+        <>
+          <textarea
+            ref={taRef}
+            aria-label={`raw content of ${slug}`}
+            value={content ?? data.content}
+            onChange={(e) => setContent(e.target.value)}
+            spellCheck={false}
+            style={{
+              flex: 1,
+              minHeight: 260,
+              boxSizing: "border-box",
+              width: "100%",
+              background: "rgba(0,0,0,0.45)",
+              border: "1px solid rgba(0,255,0,0.3)",
+              borderRadius: 7,
+              color: C.text,
+              fontFamily: FONT_MONO,
+              fontSize: 12,
+              lineHeight: 1.6,
+              padding: "10px 12px",
+              outline: "none",
+              resize: "none",
+            }}
+          />
+
+          {save.error != null && (
+            <div style={{ color: C.red, fontSize: 11.5, marginTop: 10, whiteSpace: "pre-wrap" }}>
+              {save.error instanceof Error ? save.error.message : "request failed"}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+            <button
+              onClick={doSave}
+              disabled={!dirty || save.isPending}
+              style={{
+                fontSize: 12,
+                padding: "6px 14px",
+                borderRadius: 7,
+                border: `1px solid ${C.cyan}`,
+                background: "rgba(0,243,255,0.08)",
+                color: C.cyan,
+                fontFamily: FONT_MONO,
+                cursor: save.isPending ? "wait" : dirty ? "pointer" : "not-allowed",
+                opacity: !dirty || save.isPending ? 0.55 : 1,
+              }}
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={requestExit}
+              style={{
+                fontSize: 12,
+                padding: "6px 14px",
+                borderRadius: 7,
+                border: `1px solid ${C.dim}`,
+                background: "transparent",
+                color: C.dim,
+                fontFamily: FONT_MONO,
+                cursor: "pointer",
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
