@@ -238,14 +238,29 @@ def _fallback_search(vault: str, query: str, limit: int) -> list[dict[str, Any]]
     return out
 
 
-def search(vault: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
+def search(vault: str, query: str, limit: int = 20,
+           mode: str = "fts") -> list[dict[str, Any]]:
     """Ranked search over prose + metadata.
 
-    Uses the FTS5 sidecar when available (prose-aware, bm25-ranked); otherwise
-    falls back to a metadata token-overlap scan. Always returns a list of hit
-    dicts: {slug, title, type, subtype, status, path, score, snippet}.
+    mode:
+      - "fts" (default) — FTS5 bm25 over prose+metadata (metadata fallback if
+        the sidecar is unavailable). No model needed.
+      - "semantic" — embedding cosine over `_vectors.db` (O4.2). Requires a
+        built vector index; returns [] if absent.
+      - "hybrid" — reciprocal-rank fusion of fts + semantic.
+
+    Always returns a list of hit dicts:
+    {slug, title, type, subtype, status, path, score, snippet}.
     """
     limit = max(1, min(int(limit), 200))
+    if mode in ("semantic", "hybrid"):
+        # Imported lazily so the common FTS path never pays for the embedding
+        # stack (and so environments without an embedder still import search).
+        from agent_vault import semantic
+        if mode == "semantic":
+            return semantic.semantic_search(vault, query, limit=limit)
+        return semantic.hybrid_search(vault, query, limit=limit)
+
     hits = _fts_search(vault, query, limit)
     if hits:
         return hits

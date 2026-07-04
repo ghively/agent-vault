@@ -47,11 +47,11 @@ def build_mcp(vault: str | None = None) -> Any:
     server = FastMCP("agent-vault")
 
     @server.tool()
-    def vault_search(query: str, limit: int = 20) -> dict[str, Any]:
-        """Ranked full-text search over entity prose AND metadata. Returns hits
-        with relevance scores and prose snippets — the primary way to recall
-        knowledge from the shared wiki."""
-        return mcp_tools.search(vault, query, limit)
+    def vault_search(query: str, limit: int = 20, mode: str = "fts") -> dict[str, Any]:
+        """Ranked retrieval over entity prose AND metadata — the primary way to
+        recall knowledge from the shared wiki. mode: 'fts' (keyword/bm25, no
+        model), 'semantic' (embedding cosine), or 'hybrid' (fusion of both)."""
+        return mcp_tools.search(vault, query, limit, mode)
 
     @server.tool()
     def vault_get(slug: str) -> dict[str, Any]:

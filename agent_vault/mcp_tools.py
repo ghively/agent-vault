@@ -42,18 +42,24 @@ def _err(msg: str) -> dict[str, Any]:
     return {"error": msg}
 
 
-def search(vault: str, query: str, limit: int = 20) -> dict[str, Any]:
-    """Ranked full-text search over entity prose AND metadata.
+def search(vault: str, query: str, limit: int = 20, mode: str = "fts") -> dict[str, Any]:
+    """Ranked retrieval over entity prose AND metadata.
 
-    Returns {query, hits:[{slug,title,type,subtype,status,path,score,snippet}],
-    fts}. `fts` is True when the prose-aware bm25 path is live (vs the metadata
-    fallback). This is the primary way an agent recalls knowledge from the wiki.
+    `mode`: "fts" (default, keyword/bm25, no model), "semantic" (embedding
+    cosine over the vector index), or "hybrid" (rank-fusion of both). Returns
+    {query, mode, hits:[{slug,title,type,subtype,status,path,score,snippet}],
+    fts, semantic} where the last two report which ranked paths are available.
+    This is the primary way an agent recalls knowledge from the wiki.
     """
+    from agent_vault import semantic as _semantic
+    if mode not in ("fts", "semantic", "hybrid"):
+        return _err("mode must be one of: fts, semantic, hybrid")
     q = (query or "").strip()
+    caps = {"fts": _search.fts5_available(), "semantic": _semantic.semantic_available(vault)}
     if not q:
-        return {"query": "", "hits": [], "fts": _search.fts5_available()}
-    hits = _search.search(vault, q, limit)
-    return {"query": q, "hits": hits, "fts": _search.fts5_available()}
+        return {"query": "", "mode": mode, "hits": [], **caps}
+    hits = _search.search(vault, q, limit, mode=mode)
+    return {"query": q, "mode": mode, "hits": hits, **caps}
 
 
 def get_entity(vault: str, slug: str) -> dict[str, Any]:

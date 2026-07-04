@@ -360,6 +360,10 @@ then the read/write interface agents actually need, then operational maturity.
    concurrent write; document/extend the locking boundary.
 7. **O4·2 → O4·3** (semantic retrieval → cited RAG answers) — the biggest
    capability leap; sequence after the FTS index and MCP surface exist.
+   - ~~**O4·2** (semantic + hybrid retrieval)~~ — ✅ **done** (`embeddings.py`
+     pluggable embedder + offline MockEmbedder; `semantic.py` vector index
+     (`_vectors.db`) + cosine + RRF hybrid; `search(mode=)`, `GET /api/search?mode=`,
+     `vault_search(mode=)`).
 8. **F1/F2** (top-level error boundary + SSE cancel/abort) — frontend robustness
    for the human operator/reviewer of the shared KB.
 9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for

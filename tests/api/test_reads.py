@@ -465,3 +465,24 @@ def test_search_endpoint_respects_limit():
     client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
     data = client.get("/api/search", params={"q": "account", "limit": 1}).json()
     assert len(data["hits"]) <= 1
+
+
+def test_search_endpoint_semantic_mode(monkeypatch):
+    """GET /api/search?mode=semantic ranks via the vector index (O4.2)."""
+    monkeypatch.setenv("AGENT_VAULT_EMBEDDER", "mock")
+    from agent_vault import semantic
+    vault = create_test_vault()
+    semantic.build_vector_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search", params={"q": "household checking", "mode": "semantic"}).json()
+    assert data["mode"] == "semantic"
+    assert data["semantic"] is True
+    assert data["hits"]  # some ranked results
+    assert "score" in data["hits"][0]
+
+
+def test_search_endpoint_rejects_bad_mode():
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    r = client.get("/api/search", params={"q": "x", "mode": "nonsense"})
+    assert r.status_code == 422  # pattern-validated query param

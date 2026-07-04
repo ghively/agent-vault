@@ -170,27 +170,34 @@ async def list_entities(
 async def search_entities(
     q: str = Query("", description="free-text query over prose + metadata"),
     limit: int = Query(20, ge=1, le=200),
+    mode: str = Query("fts", pattern="^(fts|semantic|hybrid)$"),
     s: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Ranked full-text search over entity prose AND metadata.
+    """Ranked retrieval over entity prose AND metadata.
 
-    Prose-aware (reads inside the compiled bodies) and bm25-ranked when the FTS5
-    sidecar (`_index.db`) is built; transparently falls back to a metadata
-    token-overlap scan otherwise. Unlike GET /api/entities (a metadata filter),
-    this is the agent-facing *retrieval* surface — a fleet of agents can query
-    the shared knowledgebase and get ranked hits with prose snippets.
+    `mode`:
+      - `fts` (default) — prose-aware bm25 via the FTS5 sidecar (`_index.db`),
+        with a metadata token-overlap fallback. No model needed.
+      - `semantic` — embedding cosine over the vector index (`_vectors.db`,
+        built via `python -m agent_vault.semantic build`). Empty if not built.
+      - `hybrid` — reciprocal-rank fusion of fts + semantic.
 
-    Returns: {query, hits: [{slug,title,type,subtype,status,path,score,snippet}],
-    fts: bool} where `fts` reports whether the ranked prose-aware path is live.
+    Unlike GET /api/entities (a metadata filter), this is the agent-facing
+    *retrieval* surface. Returns {query, mode, hits:[{slug,title,type,subtype,
+    status,path,score,snippet}], fts, semantic} where the last two report which
+    ranked paths are live.
     """
     from agent_vault import search as search_mod
+    from agent_vault import semantic as semantic_mod
 
     vault = Path(s.vault_path)
     query = q.strip()
+    caps = {"fts": search_mod.fts5_available(),
+            "semantic": semantic_mod.semantic_available(str(vault))}
     if not query:
-        return {"query": "", "hits": [], "fts": search_mod.fts5_available()}
-    hits = search_mod.search(str(vault), query, limit)
-    return {"query": query, "hits": hits, "fts": search_mod.fts5_available()}
+        return {"query": "", "mode": mode, "hits": [], **caps}
+    hits = search_mod.search(str(vault), query, limit, mode=mode)
+    return {"query": query, "mode": mode, "hits": hits, **caps}
 
 
 def build_entity_detail(vault: Path, slug: str, path: Path) -> dict[str, Any]:
