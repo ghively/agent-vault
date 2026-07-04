@@ -383,6 +383,10 @@ then the read/write interface agents actually need, then operational maturity.
    for the human operator/reviewer of the shared KB.
 9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for
    a shared system of record.
+   - ~~**O2** (vault snapshot / export / restore)~~ — ✅ **done**
+     (`agent-vault-backup export|restore|list`: tar.gz of entities/registry/
+     discovery, `--include-raw`; safe extraction rejects path traversal, refuses
+     to overwrite a non-empty vault without `--force`, reindexes on restore).
 10. Backlog: **O3** (mail/folder ingest), **B3** cadence tests, **F8** ESLint/CI,
     **O9** importers/patterns, doc-drift fixes.
 

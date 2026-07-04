@@ -78,6 +78,7 @@ samples. The *AI step* needs an external server you provide.
 | `lint.py` — anomaly report | ✅ **Real, working** | Read-only. |
 | `collections_importer.py` — Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV | ✅ **Real, working** | Bookkeeping import. |
 | `validate.py` — schema gate | ✅ **Real, working** | The smoke test every stage reuses. |
+| `backup.py` — vault snapshot / export / restore | ✅ **Real, working** | `agent-vault-backup export/restore/list`; tar.gz of entities/registry/discovery (+`--include-raw`). Safe extraction (no traversal), refuses to clobber a non-empty vault without `--force`, reindexes on restore. Derived indexes excluded (rebuilt). |
 | `cadences/*.sh` — daily/weekly/monthly wrappers | ✅ **Real, working** | Plain POSIX `sh`; wire to any runner. |
 | **Credential resolution** (turn a `creds` ref into the actual secret) | ✅ **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `synapse resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
 | **File extractors** (turn documents into text) | ✅ **Real, working** | PDF, email (+attachments), JPEG/PNG (EXIF), text/CSV, **and now `.docx` / `.xlsx` / `.html`** (pure stdlib). Each degrades to empty text on error, never crashes. |
