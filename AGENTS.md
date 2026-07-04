@@ -180,11 +180,13 @@ simplest:
   `pytest -v` for the backend, and `npm test -- --run` + `npm run build` for
   `web/`. `AGENT_VAULT_COMPILER=mock` is used wherever tests touch the
   compiler. Any in-app change must keep `python -m agent_vault.validate .` clean.
-- `tests/api/test_jobs.py` (SSE job streaming) can hang indefinitely in some
+- `tests/api/test_jobs.py` (SSE job streaming) can hang in some
   sandboxed/CI-constrained environments — this reproduces on an unmodified
   checkout too, so it's a pre-existing environment sensitivity, not something
-  your change broke. If the full suite seems to hang, `--ignore=tests/api/test_jobs.py`
-  and check that file in isolation.
+  your change broke. `pytest-timeout` is a dev dependency and
+  `timeout = 120` is set in `pyproject.toml`, so a hung test now fails with a
+  traceback instead of stalling the run; if it trips, check that file in
+  isolation (`--ignore=tests/api/test_jobs.py` for the rest).
 - Running a pipeline module directly via `python -m agent_vault.<module>` may
   print a `RuntimeWarning: '...' found in sys.modules after import of package
   'agent_vault' ...` — harmless (caused by `agent_vault/__init__.py` eagerly

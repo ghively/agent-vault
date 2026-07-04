@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "./store/auth";
+import { apiUrl } from "./api/client";
 
 export function TokenGate({ children }: { children: React.ReactNode }) {
   const { token, setToken } = useAuth();
@@ -21,11 +22,13 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
     // token otherwise mounts the app, 401s on the first call, and bounces back
     // here with no explanation.
     try {
-      const r = await fetch("/api/health", { headers: { Authorization: `Bearer ${t}` } });
+      const r = await fetch(apiUrl("/api/health"), { headers: { Authorization: `Bearer ${t}` } });
       if (r.ok) {
         setToken(t);
-      } else if (r.status === 401 || r.status === 403) {
+      } else if (r.status === 401) {
         setErr("Invalid token — please re-check it.");
+      } else if (r.status === 403) {
+        setErr("Token is valid but not authorized for this vault.");
       } else {
         setErr(`Unexpected response (${r.status}).`);
       }

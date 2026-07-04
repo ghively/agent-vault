@@ -183,19 +183,20 @@ def run_monthly() -> tuple[int, str]:
     rc: lint_rc set first, then validate overrides (validate outranks lint).
     """
     val_rc = run_stage("validate")
-    lint_rc = run_stage(
-        "lint", extra_args=["--report", "discovery/_lint_report.json"]
-    )
+    report_path = "discovery/_lint_report.json"
+    lint_started = time.time()
+    lint_rc = run_stage("lint", extra_args=["--report", report_path])
 
     # validate outranks lint (mirrors: [ "$val_rc" -ne 0 ] && rc="$val_rc")
     rc = lint_rc if lint_rc != 0 else 0
     if val_rc != 0:
         rc = val_rc
 
-    # read total_issues from the lint report if it was written
+    # read total_issues from the lint report — but only if THIS run wrote it;
+    # a report left over from a previous run must not be presented as current
+    # (1s slack for filesystems with coarse mtime granularity)
     issues: str | int = "?"
-    report_path = "discovery/_lint_report.json"
-    if os.path.isfile(report_path):
+    if os.path.isfile(report_path) and os.path.getmtime(report_path) >= lint_started - 1:
         try:
             with open(report_path, encoding="utf-8") as fh:
                 data = json.load(fh)

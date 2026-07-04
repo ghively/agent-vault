@@ -42,3 +42,50 @@ test("focusedApp returns highest-z app after refocusing a lower one", () => {
   s.focus("browse");          // browse raised above wiki
   expect(focusedApp(useWindows.getState())).toBe("browse");
 });
+
+test("minimize hides the window from focusedApp; focus restores it", () => {
+  const s = useWindows.getState();
+  s.openApp("browse");      // browse on top of the default vault window
+  s.minimize("browse");
+  expect(useWindows.getState().minimized.browse).toBe(true);
+  // minimized windows are skipped when deriving the focused app
+  expect(focusedApp(useWindows.getState())).toBe("vault");
+  // the Waybar task button restore path is focus()
+  s.focus("browse");
+  expect(useWindows.getState().minimized.browse).toBe(false);
+  expect(focusedApp(useWindows.getState())).toBe("browse");
+});
+
+test("focus restores a minimized window even when it is already top-z", () => {
+  const s = useWindows.getState();
+  s.openApp("browse");      // browse holds zTop
+  s.minimize("browse");
+  s.focus("browse");        // z unchanged, but must still un-minimize
+  expect(useWindows.getState().minimized.browse).toBe(false);
+});
+
+test("close clears minimized state", () => {
+  const s = useWindows.getState();
+  s.openApp("browse");
+  s.minimize("browse");
+  s.close("browse");
+  expect(useWindows.getState().open).not.toContain("browse");
+  expect(useWindows.getState().minimized.browse).toBeUndefined();
+});
+
+test("minimize on a non-open app is a no-op", () => {
+  useWindows.getState().minimize("wiki"); // not open
+  expect(useWindows.getState().minimized.wiki).toBeUndefined();
+});
+
+test("setTheme/setDensity stamp data-theme/data-density on <html>", () => {
+  const s = useWindows.getState();
+  s.setTheme("light");
+  s.setDensity("compact");
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.dataset.density).toBe("compact");
+  s.setTheme("dark");
+  s.setDensity("comfortable");
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.dataset.density).toBe("comfortable");
+});

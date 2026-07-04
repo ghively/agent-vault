@@ -409,16 +409,20 @@ def write_entity(vault, entity, source_path, today):
 
 
 def _yaml_quote(s):
-    """Quote a scalar only when YAML would otherwise misparse it. json.dumps
-    escapes embedded quotes, backslashes, newlines and tabs — CSV fields
-    legally contain newlines, which an unescaped write would turn into an
-    unparseable frontmatter line."""
+    """Quote a scalar whenever yaml.safe_load would NOT read the plain
+    emission back as the identical string — covering structural misparses
+    (`:`, `#`, leading `-`, flow chars, embedded newlines: CSV fields legally
+    contain them) AND silent retyping ("1984" -> int, "no" -> False,
+    "0234" -> octal 156). json.dumps escapes embedded quotes, backslashes,
+    newlines and tabs. Aligned with ingest._yaml_str — same rule in both
+    writers."""
     s = str(s)
-    if (re.search(r"[:#\[\]{}|>&*!%@`\n\r\t]", s)
-            or s.startswith(("-", "?", "!", "'", '"'))
-            or s != s.strip()):
-        return json.dumps(s)
-    return s
+    try:
+        if yaml.safe_load("k: " + s) == {"k": s}:
+            return s
+    except yaml.YAMLError:
+        pass
+    return json.dumps(s)
 
 
 def _read_frontmatter(path):
@@ -518,7 +522,6 @@ def _refresh_index(vault):
     so newly imported entities are visible to `synapse` without waiting for
     the next daily ingest."""
     try:
-        sys.path.insert(0, vault)
         from . import build_index
         saved = sys.argv[:]
         sys.argv = ["build_index.py", vault]
@@ -538,7 +541,15 @@ def import_dir(vault, dir_path, dry_run=False):
                 continue
             if not fn.lower().endswith((".csv", ".json")):
                 continue
-            out.append(import_file(vault, os.path.join(root, fn), dry_run=dry_run))
+            path = os.path.join(root, fn)
+            try:
+                out.append(import_file(vault, path, dry_run=dry_run))
+            except Exception as e:
+                # Poison-file isolation: one unreadable/malformed export must
+                # not abort the whole directory walk — record it and move on.
+                out.append({"path": path, "format": "error", "imported": 0,
+                            "skipped": 0, "bad": [],
+                            "reason": f"{type(e).__name__}: {e}"})
     return out
 
 
@@ -561,9 +572,15 @@ def main():
         i += 1
 
     if not source:
-        source = os.path.join(vault, "raw", "collections")
-    src = source if os.path.isabs(source) else os.path.join(vault, source) \
-        if not os.path.exists(source) else source
+        source = os.path.join("raw", "collections")
+    # A relative --source is vault-relative FIRST (that's the documented
+    # contract); only fall back to a cwd-relative path when the vault-relative
+    # one doesn't exist.
+    if os.path.isabs(source):
+        src = source
+    else:
+        vault_rel = os.path.join(vault, source)
+        src = vault_rel if os.path.exists(vault_rel) else source
 
     if os.path.isdir(src):
         results = import_dir(vault, src, dry_run=dry_run)
@@ -581,7 +598,7 @@ def main():
           f"{len(results)} file(s), {total_imp} new, "
           f"{total_skip} skipped, {total_bad} bad row(s)")
     for r in results:
-        if r["format"] == "unknown":
+        if r["format"] in ("unknown", "error"):
             print(f"  {r['path']}: SKIP — {r['reason']}")
             continue
         print(f"  {r['path']:60} fmt={r['format']:<10}  +{r['imported']}  "

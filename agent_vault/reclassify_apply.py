@@ -256,6 +256,9 @@ def _append_log(vault, record):
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+        # Recovery ledger must survive power loss (same posture as
+        # ingest.append_manifest / review.append_log).
+        f.flush(); os.fsync(f.fileno())
 
 
 def _now():
@@ -404,7 +407,6 @@ def apply_all(vault, only_slug=None, dry_run=False):
 
 def _refresh_index(vault):
     try:
-        sys.path.insert(0, vault)
         from . import build_index
         saved = sys.argv[:]
         sys.argv = ["build_index.py", vault]

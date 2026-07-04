@@ -15,7 +15,7 @@ authors = [{ name = "Agent Vault" }]
 dependencies = ["pyyaml>=6.0", "fastapi>=0.115", "uvicorn[standard]>=0.32", "sse-starlette>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "httpx2>=0.2", "types-PyYAML>=6.0"]
+dev = ["pytest>=8.0", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11", "httpx2>=2.0", "types-PyYAML>=6.0"]
 
 [project.scripts]
 agent-vault = "agent_vault.synapse:main"
@@ -90,3 +90,7 @@ disable_error_code = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Per-test watchdog (needs pytest-timeout): tests/api/test_jobs.py spawns real
+# subprocesses and has hung in constrained sandboxes — fail fast with a
+# traceback instead of eating the CI job's whole wall-clock budget.
+timeout = 120

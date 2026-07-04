@@ -182,15 +182,12 @@ def _fact_regexes():
     from .ingest so the denoiser and the extractor never disagree on 'a fact'."""
     global _FACT_RES_CACHE
     if _FACT_RES_CACHE is None:
-        try:
-            import ingest  # already importable in collect_source_materials' context
-            _FACT_RES_CACHE = [r for r in (
-                ingest.DUE_RE, ingest.EXPIRES_RE, ingest.RENEWS_RE, ingest.PERIOD_RE,
-                ingest.AMOUNT_RE, ingest.ORDER_RE, ingest.POLICY_RE, ingest.PARCEL_RE,
-                ingest.VIN_RE, ingest.LAST4_RE, ingest.SERIAL_RE, ingest.MODEL_RE,
-                ingest.DATE_RE) if r is not None]
-        except Exception:
-            _FACT_RES_CACHE = []
+        from . import ingest
+        _FACT_RES_CACHE = [r for r in (
+            ingest.DUE_RE, ingest.EXPIRES_RE, ingest.RENEWS_RE, ingest.PERIOD_RE,
+            ingest.AMOUNT_RE, ingest.ORDER_RE, ingest.POLICY_RE, ingest.PARCEL_RE,
+            ingest.VIN_RE, ingest.LAST4_RE, ingest.SERIAL_RE, ingest.MODEL_RE,
+            ingest.DATE_RE) if r is not None]
     return _FACT_RES_CACHE
 
 
@@ -609,7 +606,9 @@ def write_entity(path, fm_text, links_block, prose):
 # pathologically eat past `status:` into the following key on a degenerate
 # `status:\n  other: foo` (validate would catch that input, but constraining
 # the regex is cheaper than relying on upstream validation).
-STATUS_LINE_RE = re.compile(r"^(status:[ \t]*)\S+[^\n]*$", re.M)
+# Match ONLY the status token, so a substitution replaces the value and leaves
+# any trailing ` # comment` on the line intact.
+STATUS_LINE_RE = re.compile(r"^(status:[ \t]*)\S+", re.M)
 COMPILED_FROM_LINE_RE = re.compile(r"^compiled_from_hash:[ \t]*[^\n]*$", re.M)
 
 
@@ -655,11 +654,7 @@ def collect_source_materials(vault, fm):
     Importing ingest.py here is deliberate — the compile pass mustn't
     invent its own extractors; the source-of-truth for "what text does
     Python see in this raw file" is the ingestion module."""
-    sys.path.insert(0, vault)
-    try:
-        from . import ingest
-    finally:
-        sys.path.pop(0)
+    from . import ingest
 
     fact_res = _fact_regexes()
     protected = collect_protected_values(fm)

@@ -114,7 +114,6 @@ TARGETS = [
 
 def compact_vault(vault, apply=False):
     """Return {relpath: {before, after}}; rewrite in place when apply=True."""
-    sys.path.insert(0, vault)  # so `from promote import ...` resolves
     results = {}
     with vault_lock(vault):
         for rel, fn in TARGETS:

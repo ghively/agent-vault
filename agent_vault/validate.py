@@ -41,24 +41,13 @@ def load_schema(vault):
         return yaml.safe_load(f)
 
 
-_secret_scan = None
-_secret_scan_tried = False
-
-
 def _secret_scanner(vault):
-    """Lazily import the (optional) secret_scan module from the vault, once.
-    Returns the module or None. Lets validate enforce spec §7 — no plaintext
-    secret in any frontmatter value — without a hard import dependency."""
-    global _secret_scan, _secret_scan_tried
-    if not _secret_scan_tried:
-        _secret_scan_tried = True
-        try:
-            sys.path.insert(0, os.path.abspath(vault))
-            import secret_scan as _m
-            _secret_scan = _m
-        except Exception:
-            _secret_scan = None
-    return _secret_scan
+    """Return the packaged secret_scan module (spec §7 — no plaintext secret
+    in any frontmatter value). Imported loudly: a silently-absent scanner
+    would let secrets pass validation. NEVER import from the vault DATA dir —
+    putting it on sys.path is a code-execution hazard (docs/API.md)."""
+    from . import secret_scan
+    return secret_scan
 
 
 def _flatten_strings(v):
@@ -99,9 +88,16 @@ def validate_file(path, schema, vault):
         errs.append(f"type '{t}' not in registry")
     elif t:
         st = fm.get("subtype")
-        valid_subs = types[t].get("subtypes", [])
-        if st and st not in valid_subs:
-            errs.append(f"subtype '{st}' not valid for type '{t}' (valid: {valid_subs})")
+        spec = types[t]
+        if not isinstance(spec, dict):
+            # An empty type body in schema.yaml parses as None; report it
+            # against this file instead of crashing the whole run.
+            errs.append(f"schema type '{t}' has an empty/invalid body in "
+                        f"schema.yaml; cannot validate subtype '{st}'")
+        else:
+            valid_subs = spec.get("subtypes", [])
+            if st and st not in valid_subs:
+                errs.append(f"subtype '{st}' not valid for type '{t}' (valid: {valid_subs})")
 
     # status
     if fm.get("status") and fm["status"] not in VALID_STATUS:
@@ -119,7 +115,8 @@ def validate_file(path, schema, vault):
     reg_tags = set((schema.get("tags") or {}).keys())
     for tag in (fm.get("tags") or []):
         if tag not in reg_tags:
-            errs.append(f"tag '{tag}' not yet in registry (ok during seeding; promote it)")
+            errs.append(f"tag '{tag}' not in registry — promote it first or "
+                        f"add it to schema.yaml")
 
     # confidence range
     c = fm.get("confidence")
@@ -323,6 +320,15 @@ def validate_patterns(vault):
         return [f"{rel}: invalid YAML: {e}"]
     if not isinstance(doc, dict):
         return [f"{rel}: top-level is not a mapping"]
+    # Schema vocabulary the patterns must stay consistent with: every biller
+    # default_tag must be a registered tag; every shape type/subtype must be
+    # a real schema type/subtype.
+    try:
+        schema = load_schema(vault) or {}
+    except (OSError, yaml.YAMLError):
+        schema = {}
+    reg_tags = set((schema.get("tags") or {}).keys())
+    types = schema.get("types") or {}
     seen_ids = set()
     for b in (doc.get("billers") or []):
         if not isinstance(b, dict):
@@ -338,6 +344,11 @@ def validate_patterns(vault):
         matches = b.get("matches")
         if matches is not None and not isinstance(matches, list):
             errs.append(f"{rel}: biller {bid!r} 'matches' must be a list")
+        for tag in (b.get("default_tags") or []):
+            if tag not in reg_tags:
+                errs.append(f"{rel}: biller {bid!r} default_tag {tag!r} "
+                            f"not in schema tags")
+    seen_shape_ids = set()
     for s in (doc.get("shapes") or []):
         if not isinstance(s, dict):
             errs.append(f"{rel}: shapes entry is not a mapping")
@@ -345,9 +356,23 @@ def validate_patterns(vault):
         sid = s.get("id")
         if not sid:
             errs.append(f"{rel}: shape entry missing 'id'")
+        elif sid in seen_shape_ids:
+            errs.append(f"{rel}: duplicate shape id {sid!r}")
+        else:
+            seen_shape_ids.add(sid)
         keywords = s.get("keywords")
         if keywords is not None and not isinstance(keywords, list):
             errs.append(f"{rel}: shape {sid!r} 'keywords' must be a list")
+        stype = s.get("type")
+        if stype and stype not in types:
+            errs.append(f"{rel}: shape {sid!r} type {stype!r} not in schema")
+        elif stype:
+            spec = types.get(stype)
+            valid_subs = spec.get("subtypes") or [] if isinstance(spec, dict) else []
+            ssub = s.get("subtype")
+            if ssub and ssub not in valid_subs:
+                errs.append(f"{rel}: shape {sid!r} subtype "
+                            f"{stype!r}/{ssub!r} not in schema")
     return errs
 
 

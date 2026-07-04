@@ -10,6 +10,7 @@ interface WinState {
   zTop: number;
   pos: Partial<Record<AppId, XY>>;
   size: Partial<Record<AppId, WH>>;
+  minimized: Partial<Record<AppId, boolean>>;
   detailSlug: string;
   launcherOpen: boolean;
   commandBarOpen: boolean;
@@ -18,14 +19,13 @@ interface WinState {
   desktopScale: number;
   theme: "dark" | "light";
   density: "comfortable" | "compact";
-  locale: string;
   setDesktopScale: (scale: number) => void;
   setTheme: (theme: "dark" | "light") => void;
   setDensity: (density: "comfortable" | "compact") => void;
-  setLocale: (locale: string) => void;
   openApp: (id: AppId, slug?: string) => void;
   focus: (id: AppId) => void;
   close: (id: AppId) => void;
+  minimize: (id: AppId) => void;
   setPos: (id: AppId, x: number, y: number) => void;
   setSize: (id: AppId, w: number, h: number) => void;
   setDetailSlug: (slug: string) => void;
@@ -47,7 +47,6 @@ export const SCALE_MAX = 1.4;
 const SCALE_KEY = "vault.desktopScale";
 const THEME_KEY = "vault.theme";
 const DENSITY_KEY = "vault.density";
-const LOCALE_KEY = "vault.locale";
 const clampScale = (s: number) => Math.min(SCALE_MAX, Math.max(SCALE_MIN, s));
 
 function loadScale(): number {
@@ -78,13 +77,12 @@ function loadDensity(): "comfortable" | "compact" {
   }
 }
 
-function loadLocale(): string {
-  try {
-    const raw = localStorage.getItem(LOCALE_KEY);
-    return raw && raw.trim() ? raw : "en";
-  } catch {
-    return "en";
-  }
+// theme.css keys its variable overrides off [data-theme="light"] and
+// [data-density="compact"] — stamp both on <html> so they actually apply.
+function applyPrefsToDom(theme: "dark" | "light", density: "comfortable" | "compact") {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.density = density;
 }
 
 const initial = () => ({
@@ -93,6 +91,7 @@ const initial = () => ({
   zTop: 1,
   pos: { ...DEFAULT_POS },
   size: {} as Partial<Record<AppId, WH>>,
+  minimized: {} as Partial<Record<AppId, boolean>>,
   detailSlug: "",
   launcherOpen: false,
   commandBarOpen: false,
@@ -101,7 +100,6 @@ const initial = () => ({
   desktopScale: loadScale(),
   theme: loadTheme(),
   density: loadDensity(),
-  locale: loadLocale(),
 });
 
 export const useWindows = create<WinState>((set, get) => ({
@@ -116,15 +114,30 @@ export const useWindows = create<WinState>((set, get) => ({
   focus: (id) => {
     const st = get();
     if (!st.open.includes(id)) return;
-    if (st.z[id] === st.zTop) return;
+    // Focusing always restores a minimized window (the Waybar task button
+    // calls focus() — that's the restore path).
+    const minimized = st.minimized[id]
+      ? { ...st.minimized, [id]: false }
+      : st.minimized;
+    if (st.z[id] === st.zTop) {
+      if (minimized !== st.minimized) set({ minimized });
+      return;
+    }
     const zTop = st.zTop + 1;
-    set({ z: { ...st.z, [id]: zTop }, zTop });
+    set({ z: { ...st.z, [id]: zTop }, zTop, minimized });
   },
   close: (id) => {
     const st = get();
     const z = { ...st.z };
     delete z[id];
-    set({ open: st.open.filter((a) => a !== id), z });
+    const minimized = { ...st.minimized };
+    delete minimized[id];
+    set({ open: st.open.filter((a) => a !== id), z, minimized });
+  },
+  minimize: (id) => {
+    const st = get();
+    if (!st.open.includes(id)) return;
+    set({ minimized: { ...st.minimized, [id]: true } });
   },
   setPos: (id, x, y) => set({ pos: { ...get().pos, [id]: { x, y } } }),
   setSize: (id, w, h) => set({ size: { ...get().size, [id]: { w, h } } }),
@@ -148,6 +161,7 @@ export const useWindows = create<WinState>((set, get) => ({
     } catch {
       /* ignore storage failures */
     }
+    applyPrefsToDom(theme, get().density);
     set({ theme });
   },
   setDensity: (density) => {
@@ -156,24 +170,26 @@ export const useWindows = create<WinState>((set, get) => ({
     } catch {
       /* ignore storage failures */
     }
+    applyPrefsToDom(get().theme, density);
     set({ density });
   },
-  setLocale: (locale) => {
-    try {
-      localStorage.setItem(LOCALE_KEY, locale);
-    } catch {
-      /* ignore storage failures */
-    }
-    set({ locale });
-  },
   setLauncherQuery: (q) => set({ launcherQuery: q }),
-  reset: () => set(initial()),
+  reset: () => {
+    const st = initial();
+    applyPrefsToDom(st.theme, st.density);
+    set(st);
+  },
 }));
+
+// Apply persisted theme/density on load — before this, nothing ever set
+// data-theme/data-density and the theme.css overrides were dead selectors.
+applyPrefsToDom(useWindows.getState().theme, useWindows.getState().density);
 
 export function focusedApp(state: WinState): AppId | null {
   let best: AppId | null = null;
   let bestZ = -1;
   for (const id of state.open) {
+    if (state.minimized[id]) continue;
     const z = state.z[id] ?? 0;
     if (z > bestZ) { bestZ = z; best = id; }
   }

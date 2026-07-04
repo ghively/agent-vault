@@ -55,30 +55,20 @@ except Exception:
         return nullcontext()
 
 
-# Confidence bands referenced from schema.yaml's `require_confidence: high|med|low`.
-CONFIDENCE_BANDS = {"high": 0.80, "medium": 0.50, "low": 0.0}
-
-# Lazy singleton for the optional secret_scan module (spec §7). Mirrors
-# validate.py: lets promote gate field_mapping captures on the write-side
-# secret guard without a hard import dependency when the module is absent.
-_secret_scan = None
-_secret_scan_tried = False
+# Confidence bands referenced from schema.yaml's `require_confidence:
+# high|medium|low` ("med" is accepted as an alias for "medium"). An UNKNOWN
+# band must fail loud (decide() queues with a precise reason), never silently
+# behave like a 1.0 threshold.
+CONFIDENCE_BANDS = {"high": 0.80, "medium": 0.50, "med": 0.50, "low": 0.0}
 
 
 def _load_secret_scan(vault):
-    """Return the vault's secret_scan module, or None if unavailable. Imported
-    once and cached. Used by the field_mapping validation gate to reject any
-    proposed regex whose captured value is secret-shaped (spec §5/§7)."""
-    global _secret_scan, _secret_scan_tried
-    if not _secret_scan_tried:
-        _secret_scan_tried = True
-        try:
-            sys.path.insert(0, os.path.abspath(vault))
-            import secret_scan as _m  # type: ignore[import-not-found]
-            _secret_scan = _m
-        except Exception:
-            _secret_scan = None
-    return _secret_scan
+    """Return the packaged secret_scan module. Imported loudly — a silently
+    absent write-side guard (spec §5/§7) would let a secret-shaped capture
+    graduate into the registry. NEVER import from the vault DATA dir; putting
+    it on sys.path is a code-execution hazard (docs/API.md)."""
+    from . import secret_scan
+    return secret_scan
 
 
 # ============================================================================
@@ -223,6 +213,9 @@ def normalize_proposal(record, aliases_map):
         p["to_subtype"] = str(p.get("to_subtype") or "").strip().lower()
     elif kind == "biller":
         p["id"] = _norm_slug(p.get("id"))
+        for key in ("vendor_slug", "institution_slug", "account_slug"):
+            if p.get(key) is not None:
+                p[key] = _norm_slug(p[key])
         p["confidence"] = _clamp_confidence(p.get("confidence"))
     elif kind == "shape":
         p["id"] = _norm_slug(p.get("id"))
@@ -464,6 +457,31 @@ def _validate_field_mapping(p, registry_state):
     return True, "ok"
 
 
+def _validate_biller_shape(kind, p, registry_state):
+    """Deterministic gate for biller/shape proposals before they can reach the
+    patterns.yaml writers. Returns (ok, reason). Enforces what _norm_slug's
+    docstring promises: the id and every slug-valued field must be a valid
+    slug after normalization, and (billers) every default_tag must ALREADY
+    exist in the schema's tags — the system prompt requires it, and a bogus
+    tag would make every future stub fail validation."""
+    pid = _norm_slug(p.get("id"))
+    if not _SLUG_RE.match(pid):
+        return False, f"id {p.get('id')!r} is not a valid slug"
+    if kind == "biller":
+        for key in ("vendor_slug", "institution_slug", "account_slug"):
+            v = p.get(key)
+            if v is None or v == "":
+                continue
+            if not _SLUG_RE.match(_norm_slug(v)):
+                return False, f"{key} {v!r} is not a valid slug"
+        reg_tags = registry_state.get("tags") or set()
+        for t in (p.get("default_tags") or []):
+            if norm_tag(t) not in reg_tags:
+                return False, (f"default_tag {t!r} is not in the schema's "
+                               f"tags (tags must already exist)")
+    return True, "ok"
+
+
 # ============================================================================
 # Decision logic — apply the thresholds in schema.yaml's `promotion:` block
 # ============================================================================
@@ -522,6 +540,14 @@ def decide(agg_item, thresholds, schema, registry_state):
         if not ok:
             return _decision("queue_for_review", f"field_mapping rejected: {reason}")
 
+    # --- biller/shape deterministic validation gate (registry-writer guard) --
+    # A malformed id/slug or an unknown default_tag must NEVER be auto-applied
+    # to patterns.yaml; queue it with the precise rejection reason.
+    if k in ("biller", "shape"):
+        ok, reason = _validate_biller_shape(k, p, registry_state)
+        if not ok:
+            return _decision("queue_for_review", f"{k} rejected: {reason}")
+
     # --- auto: false means ALWAYS gated (new_type) ---
     if not rule.get("auto", False):
         return _decision("queue_for_review", "registry rule: auto=false (human-gated)")
@@ -543,7 +569,13 @@ def decide(agg_item, thresholds, schema, registry_state):
     # --- confidence check (when required) ---
     req_conf = rule.get("require_confidence")
     if req_conf:
-        threshold = CONFIDENCE_BANDS.get(req_conf, 1.0)
+        threshold = CONFIDENCE_BANDS.get(str(req_conf).lower())
+        if threshold is None:
+            # Unknown band: fail LOUD (queue with the reason) instead of
+            # silently acting like a 1.0 threshold nothing can ever pass.
+            return _decision("queue_for_review",
+                             f"unknown require_confidence band {req_conf!r} "
+                             f"(expected one of {sorted(CONFIDENCE_BANDS)})")
         if agg_item["max_confidence"] < threshold:
             return _decision("queue_for_review",
                              f"max_confidence={agg_item['max_confidence']:.2f} "
@@ -609,6 +641,18 @@ def _decision(action, reason, **extra):
     return {"action": action, "reason": reason, **extra}
 
 
+def _no_new_evidence(prev, agg_item):
+    """True when the evidence level recorded in `prev` equals the current
+    aggregate's — i.e. nothing new arrived since that ledger record. Compares
+    the DISTINCT from-entity count, which `compact --apply` preserves (raw
+    record counts shrink under compaction, so comparing `sightings` would
+    wrongly re-open e.g. a human rejection). Falls back to the legacy
+    `sightings` comparison only for old records that lack `distinct`."""
+    if prev.get("distinct") is not None:
+        return prev["distinct"] == len(agg_item["from_entities"])
+    return prev.get("sightings") == agg_item["sightings"]
+
+
 # ============================================================================
 # Apply promotions — the registry writers
 # ============================================================================
@@ -620,6 +664,18 @@ def _atomic_write(path, text):
         f.write(text)
         f.flush(); os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+def _selfcheck_yaml(new_text, path, who):
+    """Registry-writer self-check: the text about to replace `path` must
+    still parse as YAML. Checked BEFORE the atomic write, so an aborted apply
+    leaves the on-disk file untouched (raise -> the promote driver queues the
+    proposal for review instead of crashing the pass)."""
+    try:
+        yaml.safe_load(new_text)
+    except yaml.YAMLError as e:
+        raise ValueError(f"{who}: refusing to write {os.path.basename(path)} — "
+                         f"result would not parse as YAML ({e})")
 
 
 def _yaml_quote_key(s):
@@ -635,6 +691,22 @@ def _yaml_quote_key(s):
     s = s.replace("\r", "\\r")
     s = s.replace("\t", "\\t")
     return '"' + s + '"'
+
+
+def _yaml_scalar(v):
+    """Emit a YAML scalar that yaml.safe_load reads back as the identical
+    string. Plain style is used only when it round-trips in BOTH a mapping
+    value and a flow-list item position (covering `key: value` and `[a, b]`
+    emissions); anything YAML would misparse or retype — `[`, `:`, `#`,
+    leading/trailing space, numeric/bool-looking, empty — is quoted."""
+    s = str(v)
+    try:
+        if (yaml.safe_load("k: " + s) == {"k": s}
+                and yaml.safe_load("[" + s + "]") == [s]):
+            return s
+    except yaml.YAMLError:
+        pass
+    return _yaml_quote_key(s)
 
 
 def apply_tag(vault, name, agg, today, dry_run=False):
@@ -752,7 +824,7 @@ def apply_biller(vault, id, agg, today, dry_run=False):
     p = agg.get("proposal") if isinstance(agg, dict) else {}
     path = os.path.join(vault, "registry", "patterns.yaml")
     text = open(path, encoding="utf-8").read()
-    lines = [f"  - id: {id}"]
+    lines = [f"  - id: {_yaml_scalar(id)}"]
     matches = p.get("matches") or []
     if matches:
         lines.append("    matches:")
@@ -761,15 +833,16 @@ def apply_biller(vault, id, agg, today, dry_run=False):
     for key in ("vendor_slug", "institution_slug", "account_slug"):
         v = p.get(key)
         if v:
-            lines.append(f"    {key}: {v}")
+            lines.append(f"    {key}: {_yaml_scalar(v)}")
     dt = p.get("default_tags")
     if dt:
-        lines.append(f"    default_tags: [{', '.join(str(t) for t in dt)}]")
+        lines.append(f"    default_tags: [{', '.join(_yaml_scalar(t) for t in dt)}]")
     lines.append(f"    confidence: {_float_or(0.9, p.get('confidence'))}")
     entry = "\n".join(lines)
     new_text = _insert_in_block(text, "billers", entry)
     if new_text == text:
         return False
+    _selfcheck_yaml(new_text, path, "apply_biller")
     if not dry_run:
         _atomic_write(path, new_text)
     return True
@@ -782,9 +855,9 @@ def apply_shape(vault, id, agg, today, dry_run=False):
     path = os.path.join(vault, "registry", "patterns.yaml")
     text = open(path, encoding="utf-8").read()
     lines = [
-        f"  - id: {id}",
-        f"    type: {p.get('type', '')}",
-        f"    subtype: {p.get('subtype', '')}",
+        f"  - id: {_yaml_scalar(id)}",
+        f"    type: {_yaml_scalar(p.get('type', ''))}",
+        f"    subtype: {_yaml_scalar(p.get('subtype', ''))}",
     ]
     keywords = p.get("keywords") or []
     if keywords:
@@ -798,12 +871,13 @@ def apply_shape(vault, id, agg, today, dry_run=False):
         lines.append("    min_matches: 1")
     applies_to = p.get("applies_to")
     if applies_to:
-        lines.append(f"    applies_to: [{', '.join(str(a) for a in applies_to)}]")
+        lines.append(f"    applies_to: [{', '.join(_yaml_scalar(a) for a in applies_to)}]")
     lines.append(f"    confidence: {_float_or(0.85, p.get('confidence'))}")
     entry = "\n".join(lines)
     new_text = _insert_in_block(text, "shapes", entry)
     if new_text == text:
         return False
+    _selfcheck_yaml(new_text, path, "apply_shape")
     if not dry_run:
         _atomic_write(path, new_text)
     return True
@@ -947,6 +1021,10 @@ def log_action(vault, identity, kind, agg, decision, today_iso, dry_run=False):
         "action": decision["action"],
         "reason": decision["reason"],
         "sightings": agg["sightings"],
+        # DISTINCT from-entity count. compact.py collapses duplicate proposal
+        # records (shrinking raw `sightings`) but preserves distinct sources,
+        # so "has NEW evidence arrived?" comparisons must use this.
+        "distinct": len(agg["from_entities"]),
         "max_confidence": round(agg["max_confidence"], 2),
         "from_entities": agg["from_entities"][:8],
         "models": agg["models"],
@@ -1035,15 +1113,15 @@ def _promote_unlocked(vault, dry_run):
 
         # Don't re-log a queue/defer action that's identical to last time.
         if prev and prev.get("action") == decision["action"] and \
-           prev.get("sightings") == a["sightings"] and \
+           _no_new_evidence(prev, a) and \
            decision["action"] in ("queue_for_review", "deferred_below_threshold", "rejected_duplicate"):
             continue
         # A human rejection (review.py) stands until NEW evidence arrives:
         # the proposal is still in proposals.jsonl, so decide() would re-queue
-        # it on every run. Skip unless the sighting count has grown.
+        # it on every run. Skip unless the distinct-entity evidence has grown.
         if prev and prev.get("action") == "review_rejected" and \
            decision["action"] == "queue_for_review" and \
-           prev.get("sightings") == a["sightings"]:
+           _no_new_evidence(prev, a):
             continue
         # A human approval already wrote the registry; the follow-up
         # rejected_duplicate decision is implicit — don't clutter the ledger.

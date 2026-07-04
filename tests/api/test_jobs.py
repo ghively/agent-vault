@@ -1,15 +1,18 @@
 """Tests for async job runner endpoints with SSE streaming."""
 
+import sys
 import tempfile
 from pathlib import Path
 import asyncio
 import json
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_vault.api.app import create_app
 from agent_vault.api.config import Settings
+from agent_vault.api import jobs as jobs_module
 from agent_vault.api.jobs import JobRegistry
 
 
@@ -272,10 +275,10 @@ def test_job_run_all_allowed_ops():
 
 
 def test_job_security_no_shell_injection():
-    """Test that args are passed safely without shell injection.
+    """Test that shell-injection-shaped args are rejected outright with 400.
 
-    This is a critical security test - user args should never be executed
-    through a shell, only passed as argv to subprocess.
+    Args are validated against a per-op allowlist BEFORE any subprocess is
+    spawned — injection attempts never even become a job.
     """
     vault = create_test_vault()
     settings = Settings(vault_path=str(vault), token="")
@@ -291,17 +294,161 @@ def test_job_security_no_shell_injection():
     ]
 
     for malicious_arg in malicious_args:
-        # Compile should reject these as invalid args, not execute them
         response = client.post(
             "/api/jobs/run",
             json={"op": "compile", "args": [malicious_arg]},
         )
-        # Should return 200 (job started) but the job should fail
-        # due to invalid args, not execute shell injection
-        assert response.status_code == 200
-        job_id = response.json()["job_id"]
+        assert response.status_code == 400, f"Expected 400 for arg {malicious_arg!r}"
+        assert "detail" in response.json()
 
-        # The job should fail (bad args), not execute shell commands
-        # We just verify the job was created and doesn't crash the service
-        status_response = client.get(f"/api/jobs/{job_id}")
-        assert status_response.status_code == 200
+
+def test_job_args_disallowed_flag_rejected():
+    """A flag outside the per-op allowlist is a 400 with a clear message."""
+    vault = create_test_vault()
+    settings = Settings(vault_path=str(vault), token="")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    # --report writes to an arbitrary path — deliberately not allowlisted
+    response = client.post(
+        "/api/jobs/run",
+        json={"op": "lint", "args": ["--report", "/tmp/evil.json"]},
+    )
+    assert response.status_code == 400
+    assert "--report" in response.json()["detail"]
+
+    # A flag valid for one op is still rejected on another
+    response = client.post(
+        "/api/jobs/run",
+        json={"op": "promote", "args": ["--only", "some-slug"]},
+    )
+    assert response.status_code == 400
+
+
+async def _noop_run_job(job, vault_path):
+    """Stand-in for run_job: validation-focused tests don't need to spawn real
+    subprocesses (background children at TestClient shutdown can hang this
+    sandbox's event-loop teardown)."""
+    job.status = "completed"
+    job.returncode = 0
+
+
+def test_job_args_allowed_flags_pass(monkeypatch):
+    """Allowlisted flags (with valid values) pass validation and start a job."""
+    monkeypatch.setattr(jobs_module, "run_job", _noop_run_job)
+    vault = create_test_vault()
+    settings = Settings(vault_path=str(vault), token="")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    cases = [
+        ("compile", ["--only", "test-doc", "--limit", "5"]),
+        ("promote", ["--dry-run"]),
+        ("reclassify_apply", ["--slug", "test-doc", "--dry-run"]),
+        ("lint", ["--json", "--aging-days", "30"]),
+        ("compact", []),  # dry-run is the default; --apply is also allowed
+        ("compact", ["--apply"]),
+    ]
+    for op, args in cases:
+        response = client.post("/api/jobs/run", json={"op": op, "args": args})
+        assert response.status_code == 200, f"Failed for {op} {args}: {response.text}"
+        assert "job_id" in response.json()
+
+
+def test_job_args_bad_values_rejected():
+    """Allowlisted flags with malformed values are still rejected."""
+    vault = create_test_vault()
+    settings = Settings(vault_path=str(vault), token="")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    bad_cases = [
+        ("compile", ["--only", "Bad Slug!"]),  # spaces/uppercase/punctuation
+        ("compile", ["--only", "../escape"]),  # traversal-shaped
+        ("compile", ["--limit"]),  # missing value
+        ("compile", ["--limit", "-1"]),  # not a positive int
+        ("lint", ["--aging-days", "abc"]),
+        ("ingest", ["/etc/passwd"]),  # positional must be slug-shaped
+    ]
+    for op, args in bad_cases:
+        response = client.post("/api/jobs/run", json={"op": op, "args": args})
+        assert response.status_code == 400, f"Expected 400 for {op} {args}"
+
+
+def test_job_run_lint_and_compact_ops_accepted(monkeypatch):
+    """The extended allowlist accepts lint and compact; unknown ops still fail."""
+    monkeypatch.setattr(jobs_module, "run_job", _noop_run_job)
+    vault = create_test_vault()
+    settings = Settings(vault_path=str(vault), token="")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    for op in ("lint", "compact"):
+        response = client.post("/api/jobs/run", json={"op": op, "args": []})
+        assert response.status_code == 200, f"Failed for op {op}"
+        assert "job_id" in response.json()
+
+    response = client.post("/api/jobs/run", json={"op": "synapse", "args": []})
+    assert response.status_code == 422
+
+
+@pytest.mark.timeout(60)
+def test_run_job_stderr_flood_no_deadlock(monkeypatch, tmp_path):
+    """Regression: a child writing >>64KB to stderr must not deadlock run_job.
+
+    The old implementation drained stdout to EOF before touching stderr; once
+    the child filled the ~64KB stderr pipe buffer it blocked writing, stdout
+    never reached EOF, and both sides hung forever. Both pipes are now drained
+    concurrently.
+    """
+    # ~200KB of stderr (4000 lines x 50 chars) plus a little stdout
+    script = (
+        "import sys\n"
+        "sys.stdout.write('starting\\n')\n"
+        "for i in range(4000):\n"
+        "    sys.stderr.write('e' * 49 + '\\n')\n"
+        "sys.stdout.write('done\\n')\n"
+    )
+    monkeypatch.setattr(
+        jobs_module,
+        "_build_command",
+        lambda op, args: [sys.executable, "-c", script],
+    )
+
+    registry = JobRegistry()
+    job = registry.create("compile", [])
+    asyncio.run(jobs_module.run_job(job, tmp_path))
+
+    assert job.status == "completed"
+    assert job.returncode == 0
+    assert "starting" in job.stdout
+    assert "done" in job.stdout
+    # Buffers are capped, but the all-time counter saw every line
+    assert job.stderr_seen == 4000
+    assert len(job.stderr) == min(4000, jobs_module.MAX_LOG_LINES)
+
+
+def test_job_registry_evicts_finished_jobs():
+    """Finished jobs beyond MAX_FINISHED_JOBS are evicted oldest-first;
+    running jobs are never evicted."""
+    registry = JobRegistry()
+
+    running = registry.create("compile", [])
+    running.status = "running"
+
+    finished_ids = []
+    for _ in range(jobs_module.MAX_FINISHED_JOBS + 10):
+        job = registry.create("compile", [])
+        job.status = "completed"
+        job.returncode = 0
+        finished_ids.append(job.id)
+
+    # Creating one more triggers eviction of the oldest finished jobs
+    registry.create("compile", [])
+
+    assert registry.get(running.id) is not None, "running job must never be evicted"
+    finished_still_present = [jid for jid in finished_ids if registry.get(jid)]
+    assert len(finished_still_present) <= jobs_module.MAX_FINISHED_JOBS
+    # Oldest finished jobs went first
+    assert registry.get(finished_ids[0]) is None
+    assert registry.get(finished_ids[-1]) is not None

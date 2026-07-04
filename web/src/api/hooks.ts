@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { vaultFetch } from "./client";
 import type {
   StatusResponse, EntitiesResponse, EntityDetail, Proposal, ReviewEntity,
-  Run, Ledgers, Cred, AskResponse, Config,
+  Run, Ledgers, Cred, AskResponse, Config, SchemaResponse, EntityRaw,
 } from "./types";
 
 export const useStatus = () =>
@@ -12,6 +12,9 @@ export const useEntities = (q = "", type = "") =>
   useQuery({
     queryKey: ["entities", q, type],
     queryFn: () => vaultFetch<EntitiesResponse>(`/api/entities?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
+    // Keep showing the previous page of results while a new query/filter
+    // fetches — stops the table flickering to "loading…" on every keystroke.
+    placeholderData: (prev: EntitiesResponse | undefined) => prev,
   });
 
 export const useEntity = (slug: string) =>
@@ -41,3 +44,18 @@ export const useAsk = (q: string) =>
 
 export const useConfig = () =>
   useQuery({ queryKey: ["config"], queryFn: () => vaultFetch<Config>("/api/config") });
+
+export const useSchema = () =>
+  useQuery({
+    queryKey: ["schema"],
+    queryFn: () => vaultFetch<SchemaResponse>("/api/schema"),
+    // The taxonomy only changes when the registry is edited — cache it hard.
+    staleTime: 10 * 60 * 1000,
+  });
+
+export const useEntityRaw = (slug: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["entity", slug, "raw"],
+    queryFn: () => vaultFetch<EntityRaw>(`/api/entities/${encodeURIComponent(slug)}/raw`),
+    enabled: enabled && !!slug,
+  });

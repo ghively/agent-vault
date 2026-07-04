@@ -67,7 +67,9 @@ except Exception:
 
 PARSE_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
 LINKS_RE = re.compile(r"<!-- LINKS:BEGIN -->.*?<!-- LINKS:END -->", re.S)
-STATUS_LINE_RE = re.compile(r"^(status:[ \t]*)\S+[^\n]*$", re.M)
+# Match ONLY the status token, so a substitution replaces the value and leaves
+# any trailing ` # comment` on the line intact (mirrors compiler.py).
+STATUS_LINE_RE = re.compile(r"^(status:[ \t]*)\S+", re.M)
 COMPILED_FROM_LINE_RE = re.compile(r"^compiled_from_hash:[ \t]*[^\n]*$", re.M)
 
 
@@ -159,11 +161,7 @@ def cmd_approve(vault, sid, reason=""):
     p = rec.get("proposal") or {}
     today = datetime.date.today().isoformat()
 
-    sys.path.insert(0, vault)
-    try:
-        from . import promote
-    finally:
-        sys.path.pop(0)
+    from . import promote
 
     note = reason or "approved via review.py"
     if kind == "reclassify":
@@ -175,11 +173,7 @@ def cmd_approve(vault, sid, reason=""):
         if not slug:
             sys.exit(f"reclassify proposal {sid} has no source slug")
         _log_review(vault, ident, rec, "review_approved", note)
-        sys.path.insert(0, vault)
-        try:
-            from . import reclassify_apply
-        finally:
-            sys.path.pop(0)
+        from . import reclassify_apply
         results = reclassify_apply.apply_all(vault, only_slug=slug)
         n_applied = sum(1 for r in results if r.get("status") == "applied")
         print(f"approved {sid}: reclassify {slug} -> "
@@ -267,9 +261,12 @@ def _log_review(vault, ident, queued_rec, action, reason):
         "kind": queued_rec.get("kind"),
         "action": action,
         "reason": reason,
-        # Carried so promote.py's "rejection stands at same sighting count"
-        # comparison works against this record.
+        # Carried so promote.py's "rejection stands until new evidence"
+        # comparison works against this record. `distinct` is the
+        # compaction-stable count promote compares on; `sightings` is kept
+        # as the legacy fallback for old ledgers.
         "sightings": queued_rec.get("sightings", 0),
+        "distinct": queued_rec.get("distinct"),
         "proposal": queued_rec.get("proposal"),
         "by": "review.py",
     })

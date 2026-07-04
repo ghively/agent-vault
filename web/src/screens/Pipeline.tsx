@@ -1,9 +1,15 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRuns, useLedgers } from "../api/hooks";
-import { startJob, useJobStream } from "../api/jobs";
+import { startJob, streamJob } from "../api/jobs";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { Run } from "../api/types";
+
+// The weekly cadence stages, in cadences/weekly.sh order (ingest → compile →
+// promote → validate). "validate" is not an allowed job op, so the client
+// chains the three exposed stages; validation still runs inside the shell
+// cadence on the host.
+const WEEKLY_OPS = ["ingest", "compile", "promote"] as const;
 
 const STAGES = [
   {
@@ -59,33 +65,61 @@ export function Pipeline() {
   const { data: runsData, isError: runsError } = useRuns();
   const { data: ledgers, isError: ledgersError } = useLedgers();
   const qc = useQueryClient();
-  const [jobId, setJobId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const stream = useJobStream(jobId);
+  const [jobLabel, setJobLabel] = useState<string | null>(null);
+  const [jobState, setJobState] = useState<"running" | "done" | "error" | null>(null);
+  const [jobRc, setJobRc] = useState<number | null>(null);
+  const [lines, setLines] = useState<string[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
-  // Invalidate runs + ledgers when the job finishes
-  React.useEffect(() => {
-    if (stream.state === "done") {
+  /** Run ops in sequence; stop (and report which stage failed) on the first
+   *  job whose SSE "end" is not completed/rc 0. */
+  async function runOps(label: string, ops: readonly string[]) {
+    setRunning(true);
+    setErrorMsg(null);
+    setJobLabel(label);
+    setJobState("running");
+    setJobRc(null);
+    setLines([]);
+    const append = (l: string) => { if (mountedRef.current) setLines((p) => [...p, l]); };
+    try {
+      for (const op of ops) {
+        if (ops.length > 1) append(`── stage: ${op} ──`);
+        const id = await startJob(op, []);
+        const res = await streamJob(id, append);
+        if (!mountedRef.current) return;
+        setJobRc(res.rc);
+        if (res.state !== "done" || (res.rc ?? 1) !== 0) {
+          setJobState("error");
+          setErrorMsg(
+            ops.length > 1
+              ? `weekly run failed at stage "${op}"${res.rc != null ? ` (rc=${res.rc})` : ""} — later stages skipped`
+              : `${op} failed${res.rc != null ? ` (rc=${res.rc})` : ""}`,
+          );
+          return;
+        }
+      }
+      if (mountedRef.current) setJobState("done");
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setJobState("error");
+      setErrorMsg(e instanceof Error ? e.message : "failed to start the job");
+    } finally {
+      if (mountedRef.current) setRunning(false);
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["ledgers"] });
-      setRunning(false);
     }
-    if (stream.state === "error") {
-      setRunning(false);
-    }
-  }, [stream.state, qc]);
-
-  async function handleRunWeekly() {
-    if (!window.confirm("Start the weekly cadence run?")) return;
-    setRunning(true);
-    const id = await startJob("weekly");
-    setJobId(id);
   }
 
-  async function handleDryRun() {
-    setRunning(true);
-    const id = await startJob("lint");
-    setJobId(id);
+  function handleRunWeekly() {
+    if (!window.confirm("Start the weekly cadence run?")) return;
+    void runOps("weekly (ingest → compile → promote)", WEEKLY_OPS);
+  }
+
+  function handleDryRun() {
+    void runOps("lint (dry run)", ["lint"]);
   }
 
   if (runsError || ledgersError) {
@@ -244,8 +278,22 @@ export function Pipeline() {
             </button>
           </div>
 
-          {/* Job card — shown when a job is active */}
-          {jobId && (
+          {/* Error banner — job-start failures and failed stages */}
+          {errorMsg && (
+            <div style={{
+              marginTop: 14,
+              border: "1px solid rgba(255,95,86,0.5)",
+              background: "rgba(20,0,0,0.4)",
+              padding: "9px 13px",
+              color: C.red,
+              fontSize: 12,
+            }}>
+              error — {errorMsg}
+            </div>
+          )}
+
+          {/* Job card — shown once a run has been started */}
+          {jobLabel && (
             <div style={{
               marginTop: 14,
               border: "1px solid rgba(128,0,255,0.4)",
@@ -253,10 +301,10 @@ export function Pipeline() {
               padding: "11px 13px",
             }}>
               <div style={{ color: C.purple, fontSize: 11, letterSpacing: 1, marginBottom: 6 }}>
-                JOB {jobId} &nbsp;
-                <span style={{ color: stream.state === "done" ? C.greenSoft : stream.state === "error" ? C.red : C.cyan }}>
-                  {stream.state ?? "starting"}
-                  {stream.rc != null ? ` · rc=${stream.rc}` : ""}
+                JOB {jobLabel} &nbsp;
+                <span style={{ color: jobState === "done" ? C.greenSoft : jobState === "error" ? C.red : C.cyan }}>
+                  {jobState ?? "starting"}
+                  {jobRc != null ? ` · rc=${jobRc}` : ""}
                 </span>
               </div>
               <div style={{
@@ -266,9 +314,9 @@ export function Pipeline() {
                 lineHeight: 1.6,
                 color: C.dim,
               }}>
-                {stream.lines.length === 0
+                {lines.length === 0
                   ? <span style={{ color: "#444" }}>waiting for output…</span>
-                  : stream.lines.map((l, i) => <div key={i}>{l}</div>)
+                  : lines.map((l, i) => <div key={i}>{l}</div>)
                 }
               </div>
             </div>

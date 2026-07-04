@@ -41,7 +41,18 @@ def parse_entity(path, vault="."):
     m = FM_RE.match(raw)
     if not m:
         return None
-    fm = yaml.safe_load(m.group(1)) or {}
+    # One malformed entity must not abort the whole index build — warn and
+    # skip it, same posture as the other frontmatter readers.
+    try:
+        fm = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError as e:
+        print(f"warn: skipping {path}: frontmatter is not valid YAML ({e})",
+              file=sys.stderr)
+        return None
+    if not isinstance(fm, dict):
+        print(f"warn: skipping {path}: frontmatter is not a mapping",
+              file=sys.stderr)
+        return None
     # Pin path relative to the vault, not to cwd — keeps the index stable
     # no matter where build_index.py is invoked from (compiler.py calls it
     # in-process, so cwd may not be the vault).
@@ -56,9 +67,12 @@ def parse_entity(path, vault="."):
     if dates:
         rec["dates"] = dates
     rec["has_credential"] = bool(fm.get("credential_ref"))
-    # normalize aliases to lowercase for matching; keep title as a searchable alias too
-    al = [str(a).lower() for a in fm.get("aliases", [])]
-    rec["_match"] = list({rec.get("slug", "").lower(), rec.get("title", "").lower(), *al} - {""})
+    # normalize aliases to lowercase for matching; keep title as a searchable
+    # alias too. str() coercion: a non-string slug/title (e.g. `title: 1984`)
+    # must not crash the build.
+    al = [str(a).lower() for a in (fm.get("aliases") or [])]
+    rec["_match"] = list({str(rec.get("slug", "")).lower(),
+                          str(rec.get("title", "")).lower(), *al} - {""})
     return rec
 
 
@@ -87,10 +101,12 @@ def main():
              f"_generated {index['generated']}_\n"]
     by_type = {}
     for e in entities:
-        by_type.setdefault(e.get("type", "?"), []).append(e)
+        by_type.setdefault(str(e.get("type", "?")), []).append(e)
     for t in sorted(by_type):
         lines.append(f"\n## {t}\n")
-        for e in sorted(by_type[t], key=lambda x: x.get("title", "")):
+        # str() sort keys: a non-string title (e.g. `title: 1984`) must not
+        # crash the human-index render with a str/int comparison.
+        for e in sorted(by_type[t], key=lambda x: str(x.get("title", ""))):
             tags = f"  `{', '.join(e['tags'])}`" if e.get("tags") else ""
             lines.append(f"- **{e.get('title','?')}** ({e.get('subtype','')}) — `{e['slug']}`{tags}")
     out_md = os.path.join(vault, "_index.md")
