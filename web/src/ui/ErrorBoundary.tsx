@@ -5,6 +5,14 @@ interface Props {
   children: React.ReactNode;
   /** When this value changes, the boundary clears its error (e.g. the app id). */
   resetKey?: string | number;
+  /** Headline shown above the error message. */
+  title?: string;
+  /**
+   * When true, the recovery button reloads the page instead of re-rendering.
+   * Use at the app root (F1): re-rendering a shell-level crash usually just
+   * re-crashes, so a reload is the honest recovery.
+   */
+  reloadOnFail?: boolean;
 }
 interface State {
   error: Error | null;
@@ -46,12 +54,16 @@ export class ErrorBoundary extends React.Component<Props, State> {
           textAlign: "center",
         }}
       >
-        <div style={{ color: C.red, fontSize: 16 }}>this screen hit an error</div>
+        <div style={{ color: C.red, fontSize: 16 }}>
+          {this.props.title ?? "this screen hit an error"}
+        </div>
         <div style={{ color: C.dim, fontFamily: FONT_MONO, fontSize: 12, maxWidth: 480, wordBreak: "break-word" }}>
           {error.message || String(error)}
         </div>
         <button
-          onClick={() => this.setState({ error: null })}
+          onClick={() =>
+            this.props.reloadOnFail ? window.location.reload() : this.setState({ error: null })
+          }
           style={{
             cursor: "pointer",
             border: `1px solid ${C.green}`,
@@ -61,7 +73,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             fontFamily: FONT_UI,
           }}
         >
-          retry
+          {this.props.reloadOnFail ? "reload" : "retry"}
         </button>
       </div>
     );

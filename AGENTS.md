@@ -18,11 +18,20 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   `validate`, `lint`, `review`, `reclassify_apply`, `collections_importer`) —
   those have no console-script entry point.
 - **Service**: `agent-vault-serve` console script — FastAPI HTTP service with
-  27 routes (entities, credentials, review, jobs, run history, status/ask,
-  config, settings), not just credential resolution. Full reference:
-  [`docs/API.md`](docs/API.md).
+  30 routes (entities incl. `GET /api/search` + `GET /api/answer`, credentials, review, jobs, run
+  history, status/ask, config, settings), not just credential resolution. Full
+  reference: [`docs/API.md`](docs/API.md).
 - **UI**: React web interface in `web/` — a window-manager desktop with 8
   apps. Full reference: [`web/README.md`](web/README.md).
+- **MCP**: `agent-vault-mcp` console script (optional `[mcp]` extra) — a Model
+  Context Protocol server exposing the vault to agents as tools (`vault_search`,
+  `vault_ask`, `vault_get`, `vault_list`, `vault_status`, `vault_submit_source`,
+  `vault_resolve_credential`). Thin FastMCP wiring (`mcp_server.py`) over pure,
+  tested tool logic (`mcp_tools.py`); reads are lock-free, the only write
+  (`submit_source`) is append-only into `raw/` with actor attribution, and
+  secret resolution is opt-in (`AGENT_VAULT_MCP_ALLOW_RESOLVE=1`). Retrieval/
+  answer stack: `search.py` (FTS5) + `semantic.py` (embeddings) + `rag.py`
+  (cited answers); embedders/answerers are pluggable (Ollama or offline mock).
 
 Formerly embedded in SynapseNAS; now a standalone product consumed over HTTP.
 
@@ -56,19 +65,22 @@ invariant, not a technical guarantee.
 | `registry/patterns.yaml` | human + promotion-append | allowed (classifier vocabulary — billers + shapes) |
 | `registry/field_mappings.yaml` | `promote.py` ONLY | **BLOCKED** - learned field mappings; grow via promote + human review approval path |
 | `registry/resolvers.yaml` | human only | allowed (credential backend config) |
+| `registry/tokens.yaml` | human only | allowed (OPTIONAL per-agent API tokens → `{actor, scopes}`; parallel to resolvers.yaml) |
 | `registry/_entity-template.md` | human | allowed (structural template) |
-| `raw/**` | append-only (sources) | adding new files OK; **never modify/delete** existing - WARNED |
-| `discovery/*.jsonl` | append-only (scripts) | **never hand-edit** (corrupts audit/proposals) - WARNED |
+| `raw/**` | append-only (sources) | adding new files OK (incl. MCP `submit_source`); **never modify/delete** existing - WARNED |
+| `discovery/*.jsonl` | append-only (scripts) | **never hand-edit** — proposals/promoted/_runs/_access (API audit)/_submissions (MCP) - WARNED |
 | `entities/**/*.md` | ingest (frontmatter/LINKS) + compiler (prose) | edit only via the pipeline / recipes, honoring region ownership |
-| `_index.json` / `_index.md` | `build_index.py` only | regenerated; never hand-edit |
+| `_index.json` / `_index.md` | `build_index.reindex()` only | DERIVED; regenerated after every mutating pass; git-ignored; never hand-edit |
+| `_index.db` (FTS5) / `_vectors.db` (embeddings) | `build_index` / `semantic build` | DERIVED search sidecars; rebuildable; git-ignored; never hand-edit |
 
 ## Pipeline + exact CLI signatures
 
-Every stage below lives under `agent_vault/` and is run as `python -m
-agent_vault.<module> <vault-dir>` — **none of these modules have a console-
-script entry point** except `synapse` (→ `agent-vault`) and `serve` (→
-`agent-vault-serve`); `pyproject.toml`'s `[project.scripts]` declares exactly
-those two.
+Every pipeline stage below lives under `agent_vault/` and is run as `python -m
+agent_vault.<module> <vault-dir>` — those pipeline modules have **no** console-
+script entry point. `pyproject.toml`'s `[project.scripts]` declares five:
+`agent-vault` (→ `synapse`), `agent-vault-serve` (→ `serve`), `agent-vault-mcp`
+(→ `mcp_server`, optional `[mcp]` extra), `agent-vault-backup` (→ `backup`), and
+`agent-vault-migrate` (→ `migrate`).
 
 ```
 raw/ (append-only)
@@ -152,24 +164,32 @@ is at **version 2.0** — it now teaches the LLM to emit three new proposal kind
 Changing the prompt/proposal shape requires a version bump so changes are
 audited — bump `PROMPT_CONTRACT_VERSION` in `agent_vault/compiler.py` and
 document the new proposal kind(s) here and in `DOCS.md` §5.
-`AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI); it's the
-only compiler client with test coverage today — `OllamaClient` (the real AI
-path) has none (see `DOCS.md` §8).
+`AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI). Both clients
+have unit coverage: `MockClient` end-to-end, and `OllamaClient`'s
+parsing/retry/error handling against a mocked HTTP transport
+(`tests/test_ollama_client.py`) — only a *live* Ollama server is (correctly)
+unexercised in CI.
 
 ## Integration boundary (HTTP)
 
 The vault is a **standalone HTTP service** (`agent-vault-serve`). Consumers
 (like SynapseNAS) call it over the network — no file-system or subprocess
 coupling, the boundary is HTTP + JSON. It exposes far more than credential
-resolution: 27 routes across entities, credentials, review, jobs (including
+resolution: 30 routes across entities, credentials, review, jobs (including
 SSE log streaming for running pipeline stages from a browser), run history,
 status/ask, config, and settings. **Full reference: [`docs/API.md`](docs/API.md).**
 The two simplest:
 
 - **Health**: `http://127.0.0.1:7778/api/health`
 - **Credential resolve**: `http://127.0.0.1:7778/api/creds/{slug}/resolve`
-- **Auth**: Optional `VAULT_TOKEN` bearer token, scoped to `/api/*` only —
-  the SPA shell and FastAPI's `/docs`/`/redoc`/`/openapi.json` are never gated.
+- **Auth + scopes (O5/O6)**: `VAULT_TOKEN` (legacy, all-scopes admin) OR a
+  per-agent token registry (`VAULT_TOKENS` env JSON / `registry/tokens.yaml`)
+  mapping tokens → `{actor, scopes}`. Scopes `read`/`write`/`resolve` gate by
+  request shape (401 unknown token, 403 missing scope). Gating is `/api/*` only;
+  the SPA shell and `/docs`/`/redoc`/`/openapi.json` are never gated. Every
+  write/resolve is attributed in `discovery/_access.jsonl` (actor + method +
+  path + status; never bodies/secrets). `registry/tokens.yaml` is HUMAN-authored
+  (like `resolvers.yaml`).
 
 ## Gotchas
 

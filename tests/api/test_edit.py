@@ -323,6 +323,19 @@ def test_patch_secret_value_422_nothing_written():
     assert path.read_text(encoding="utf-8") == original
 
 
+def test_patch_labeled_secret_422_nothing_written():
+    """B4: the human-edit path also catches a LABELED plaintext secret
+    (`password: <value>`) that the strict branded-format gate would miss."""
+    vault = create_edit_vault()
+    client = make_client(vault)
+    path = vault / "entities" / "asset" / "toaster.md"
+    original = path.read_text(encoding="utf-8")
+    r = client.patch("/api/entities/toaster", json={"notes": "password: Hunter2Zzz!"})
+    assert r.status_code == 422
+    assert "secret" in r.json()["detail"]
+    assert path.read_text(encoding="utf-8") == original
+
+
 def test_patch_validate_failure_rolls_back():
     vault = create_edit_vault()
     client = make_client(vault)

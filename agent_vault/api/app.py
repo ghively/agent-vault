@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from agent_vault.api.audit import AuditMiddleware
 from agent_vault.api.auth import create_auth_dependency
 from agent_vault.api.config import Settings
 from agent_vault.api import creds
@@ -22,6 +23,16 @@ from agent_vault.api import status as status_api
 from agent_vault.api import vault_config
 
 
+def _package_version() -> str:
+    """Single source of truth for the API version: the installed package
+    metadata (pyproject `version`), with a dev fallback so it never crashes."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("agent-vault")
+    except PackageNotFoundError:
+        return "0.0.0+dev"
+
+
 def create_app(settings: Settings) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -29,17 +40,21 @@ def create_app(settings: Settings) -> FastAPI:
     browser can load the SPA UI openly; the UI's token gate then sends the bearer
     on its /api calls. The UI itself is served open from the built ``web/dist``.
     """
-    # Auth applies to /api only (see docstring) — empty list = open (no token set).
-    api_deps: list[Any] = []
-    if settings.token:
-        api_deps.append(Depends(create_auth_dependency(settings.token)))
+    # Auth applies to /api only (see docstring). The dependency resolves the
+    # caller's Identity + scope and self-disables (everything open) when no token
+    # is configured, so it's always safe to attach.
+    api_deps: list[Any] = [Depends(create_auth_dependency(settings))]
 
     app = FastAPI(
         title="Agent Vault API",
         description="HTTP API for Agent Vault document wiki",
-        version="0.1.0",
+        version=_package_version(),
     )
     app.state.settings = settings
+
+    # Attribution trail: audit every mutating/resolve /api call with the caller's
+    # resolved actor (never bodies/secrets). See agent_vault/api/audit.py.
+    app.add_middleware(AuditMiddleware, vault_path=settings.vault_path)
 
     # Deliberately unauthenticated: LB/orchestrator liveness probes can't send
     # a bearer token. Returns liveness only — no vault data.

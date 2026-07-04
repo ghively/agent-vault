@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-vault"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic, file-based document wiki — retrieval, ingest, compile, promote. No model, no hallucination surface."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,10 +16,16 @@ dependencies = ["pyyaml>=6.0", "fastapi>=0.115", "uvicorn[standard]>=0.32", "sse
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11", "httpx2>=2.0", "types-PyYAML>=6.0"]
+# Optional: expose the vault to agents over the Model Context Protocol.
+# `pip install "agent-vault[mcp]"` then run `agent-vault-mcp`.
+mcp = ["mcp>=1.2"]
 
 [project.scripts]
 agent-vault = "agent_vault.synapse:main"
 agent-vault-serve = "agent_vault.serve:main"
+agent-vault-mcp = "agent_vault.mcp_server:main"
+agent-vault-backup = "agent_vault.backup:main"
+agent-vault-migrate = "agent_vault.migrate:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_vault"]
@@ -69,6 +75,9 @@ module = [
   "agent_vault.validate",
   "agent_vault.resolvers",
   "agent_vault.resolvers.*",
+  # Thin FastMCP wiring around the strict, tested mcp_tools.py. Eased because
+  # the optional `mcp` SDK ships no type info, so its decorators are untyped.
+  "agent_vault.mcp_server",
 ]
 strict = false
 disable_error_code = [

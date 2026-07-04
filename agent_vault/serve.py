@@ -18,6 +18,7 @@ def main() -> None:
     Reads configuration from environment and starts the uvicorn server.
     """
     settings = Settings.from_env()
+    settings.validate()  # fail fast on a bad vault path (B1)
     app = create_app(settings)
 
     uvicorn.run(

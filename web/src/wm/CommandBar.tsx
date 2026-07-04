@@ -106,6 +106,10 @@ export function CommandBar() {
 
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+    // executeAction/toggleCommandBar are intentionally omitted: the effect
+    // re-binds whenever filteredActions/selectedIndex change (capturing a fresh
+    // executeAction each time), and toggleCommandBar is a stable zustand action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commandBarOpen, filteredActions, selectedIndex]);
 
   // Scroll selected item into view

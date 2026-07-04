@@ -68,5 +68,9 @@ def test_openapi_schema_metadata() -> None:
     schema = app.openapi()
 
     assert schema["info"]["title"] == "Agent Vault API"
-    assert schema["info"]["version"] == "0.1.0"
+    # Version is derived from the installed package metadata (single source of
+    # truth: pyproject.toml), so assert it's present + version-shaped rather
+    # than pinning a literal a release bump would break.
+    assert schema["info"]["version"]
+    assert schema["info"]["version"][0].isdigit()
     assert "HTTP API for Agent Vault document wiki" in schema["info"]["description"]

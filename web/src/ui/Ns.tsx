@@ -29,7 +29,6 @@ export function NsTitle({ children, sub }: { children: ReactNode; sub?: string }
 
 // ── NsCard ────────────────────────────────────────────────
 export function NsCard({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  const { C } = useTheme();
   return (
     <div style={{
       background: "rgba(255,255,255,0.022)",

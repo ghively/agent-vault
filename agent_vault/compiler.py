@@ -40,9 +40,26 @@ import sys
 import os
 import re
 import json
+import time
 import datetime
 import urllib.request
 import urllib.error
+
+
+def _env_int(name, default):
+    """Read an int env knob, falling back to default on unset/garbage."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _env_float(name, default):
+    """Read a float env knob, falling back to default on unset/garbage."""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
 
 # Force UTF-8 stdout/stderr so entity titles and LLM-proposed content with
 # Unicode don't crash on Windows consoles that default to cp1252.
@@ -389,10 +406,15 @@ def parse_response(text):
     pm = PROSE_RE.search(text)
     if pm:
         prose = pm.group(1).strip()
+        # Look for proposals ONLY after the real </prose> end, so a stray
+        # "<proposals>" quoted inside the prose can't hijack the (greedy) match
+        # and turn a valid proposal set into a dropped, non-JSON slice.
+        proposals_region = text[pm.end():]
     else:
         # unclosed <prose>: recover rather than silently lose the whole body
         fm = PROSE_OPEN_RE.search(text)
         prose = fm.group(1).strip() if fm else ""
+        proposals_region = text
     # Defensive sanitization: even if the model violates the contract and
     # emits frontmatter delimiters or a LINKS block inside the prose,
     # strip them out so they can't corrupt the entity file structure.
@@ -400,7 +422,7 @@ def parse_response(text):
         prose = re.sub(r"<!--\s*LINKS:(BEGIN|END)\s*-->", "", prose)
         prose = re.sub(r"^---\s*$", "", prose, flags=re.M)
     proposals = []
-    pp = PROPOSALS_RE.search(text)
+    pp = PROPOSALS_RE.search(proposals_region)
     if pp:
         body = pp.group(1).strip()
         if body and body != "[]":
@@ -515,11 +537,30 @@ class OllamaClient(CompileClient):
     """
     name = "ollama"
 
+    # Cap the response we read into memory so a malfunctioning endpoint can't
+    # stream an unbounded body. 8 MiB is far above any real compile response.
+    MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
     def __init__(self, host=None, model=None, timeout=120):
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.model = model or os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
         self.timeout = timeout
         self.name = f"ollama:{self.model}"
+        # Sampling / runtime knobs are config, not code (matches the OLLAMA_HOST/
+        # OLLAMA_MODEL ethos). temperature stays low for faithful, low-variance
+        # prose; num_ctx defaults high enough to cover the *whole* source-char
+        # budget plus prompt scaffold, so raising AGENT_VAULT_TOTAL_SOURCE_CHARS
+        # for a big-context model isn't silently truncated by Ollama at 8192.
+        self.temperature = _env_float("OLLAMA_TEMPERATURE", 0.2)
+        # ~3.5 chars/token is a conservative estimate; +4000 covers the system
+        # prompt + stub scaffold. Floor at 8192 to preserve today's default.
+        budget_ctx = int((TOTAL_SOURCE_CHAR_BUDGET + 4000) / 3.5)
+        self.num_ctx = _env_int("OLLAMA_NUM_CTX", max(8192, budget_ctx))
+        # Bounded retry for TRANSIENT connection/timeout faults only (not HTTP
+        # 4xx or bad JSON). The weekly cadence is the one LLM pass, so a momentary
+        # Ollama restart must not silently drop entities until next week.
+        self.retries = max(0, _env_int("OLLAMA_RETRIES", 2))
+        self.retry_backoff_s = _env_float("OLLAMA_RETRY_BACKOFF_S", 1.0)
 
     def compile(self, system_prompt, user_prompt):
         url = self.host.rstrip("/") + "/api/generate"
@@ -528,26 +569,55 @@ class OllamaClient(CompileClient):
             "system": system_prompt,
             "prompt": user_prompt,
             "stream": False,
-            "options": {"temperature": 0.2, "num_ctx": 8192},
+            "options": {"temperature": self.temperature, "num_ctx": self.num_ctx},
         }).encode("utf-8")
-        req = urllib.request.Request(url, data=body,
-                                     headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw_body = resp.read().decode("utf-8")
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-            # Network failures bubble up as RuntimeError; compile_all catches
-            # this per-entity so one timeout doesn't kill the whole pass.
-            raise RuntimeError(f"Ollama at {self.host} unreachable: {e}") from e
+        raw_body = self._post_with_retry(url, body)
         try:
             payload = json.loads(raw_body)
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Ollama returned non-JSON response "
                                f"(first 200 chars: {raw_body[:200]!r}): {e}") from e
+        # Ollama reports model/runtime problems in an `error` field with HTTP 200
+        # (e.g. {"error":"model 'x' not found"}). Surface it verbatim instead of
+        # letting it degrade into the vaguer "model returned no <prose>" downstream.
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(f"Ollama error: {payload['error']}")
         raw = payload.get("response") or ""
         prose, proposals = parse_response(raw)
         return {"prose": prose, "proposals": proposals,
                 "model": self.name, "raw": raw}
+
+    def _post_with_retry(self, url, body):
+        """POST with bounded retry on transient faults. Returns the body text.
+
+        Retries only connection/timeout errors; an HTTP status error (4xx/5xx)
+        or a malformed request is surfaced immediately with a clear message.
+        """
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"})
+        last_exc: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return resp.read(self.MAX_RESPONSE_BYTES).decode("utf-8")
+            except urllib.error.HTTPError as e:
+                # A definite server verdict (model-not-found, bad request): do
+                # NOT retry — report the status and any error body.
+                detail = ""
+                try:
+                    detail = e.read(2048).decode("utf-8", "replace")
+                except Exception:  # noqa: BLE001
+                    pass
+                raise RuntimeError(
+                    f"Ollama HTTP {e.code} at {self.host}: {detail or e.reason}") from e
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+                last_exc = e
+                if attempt < self.retries:
+                    time.sleep(self.retry_backoff_s * (attempt + 1))
+                    continue
+        raise RuntimeError(
+            f"Ollama at {self.host} unreachable after {self.retries + 1} "
+            f"attempt(s): {last_exc}") from last_exc
 
 
 def get_client(model_override=None):
@@ -691,7 +761,8 @@ def find_pending(vault):
             if not fn.endswith(".md"):
                 continue
             path = os.path.join(d, fn)
-            raw = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as fh:
+                raw = fh.read()
             fm_text, _links, _prose = split_entity(raw)
             if fm_text is None:
                 continue
@@ -703,7 +774,14 @@ def find_pending(vault):
             if status == "stub":
                 yield path, raw, fm_text, fm
             elif status == "compiled":
-                if fm.get("compiled_from_hash") != fm.get("sources_hash"):
+                # Drift = the source SET changed since we last compiled. Guard the
+                # empty-hash trap: an entity missing `sources_hash` (malformed or
+                # hand-authored) would otherwise compare ""/None as "drifted" every
+                # pass and recompile forever, re-appending proposals and burning
+                # LLM tokens. Only a present, non-empty, DIFFERING hash counts.
+                # (Correctness of path-set drift relies on raw/ being append-only.)
+                src_hash = fm.get("sources_hash")
+                if src_hash and fm.get("compiled_from_hash") != src_hash:
                     yield path, raw, fm_text, fm
             # needs-review / unknown / archived are intentionally skipped:
             # a human curates those before they're worth the compile cost.
@@ -815,6 +893,15 @@ def _compile_all_locked(vault, client=None, limit=None, only=None):
             out["total_source_chars_sent"] += r.get("source_chars_sent", 0)
         else:
             out["failed"].append(r)
+    # A compile flips status stub->compiled, which the search index reflects.
+    # Rebuild it in-process (under the caller's lock) so readers — including the
+    # recompile HTTP endpoint's response — never see a stale `stub` afterwards.
+    if out["compiled"]:
+        try:
+            from . import build_index
+            build_index.reindex(vault, quiet=True)
+        except Exception as e:  # noqa: BLE001 - never let reindex fail the compile
+            print(f"warn: reindex after compile failed: {e}", file=sys.stderr)
     return out
 
 

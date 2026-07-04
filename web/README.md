@@ -30,12 +30,14 @@ Other scripts (`web/package.json`):
 ```bash
 npm run build             # tsc -b && vite build -> web/dist (served by agent-vault-serve if present)
 npm run preview           # preview the production build locally
+npm run lint              # ESLint 9 (typescript-eslint + react-hooks) — CI gate
+npm run typecheck         # tsc -b (also runs inside build)
 npm test                  # vitest run — one-shot test run (used by CI)
 npm run test:watch        # vitest — watch mode
 ```
 
-There is **no lint script and no ESLint config** in `web/` today — `tsc -b`
-(part of `build`) is the only static check.
+Static checks: **ESLint** (`eslint.config.js`, flat config) plus `tsc -b`. CI
+(`.github/workflows/ci.yml`) runs lint → tests → build for `web/`.
 
 ## Entry point and the "PHOSPHOR" desktop shell
 
@@ -184,11 +186,10 @@ Vitest (`web/vite.config.ts`: `environment: "jsdom"`, `setupFiles:
 colocated per-component (`*.test.tsx` / `*.test.ts` next to the file they
 cover) across `wm/`, `screens/`, `store/`, `api/`, `ui/`. Run `npm test`
 for a one-shot run (what CI does via `.github/workflows/ci.yml`'s
-`frontend` job: `npm ci` → `npm test -- --run` → `npm run build`).
+`frontend` job: `npm ci` → `npm run lint` → `npm test -- --run` → `npm run build`).
 
 ## Known gaps (don't be surprised by these)
 
-- No ESLint config, no lint script.
 - No router library — navigation is in-memory state via `store/windows.ts` +
   `ScreenRouter`'s `switch`; there's no deep-linking (a page refresh always
   lands back on the `Vault` hub screen).

@@ -9,6 +9,9 @@ AskResponse).
 
 from __future__ import annotations
 
+import glob
+import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -108,6 +111,35 @@ def _find_items(ents: list[dict[str, Any]], q: str) -> list[dict[str, Any]]:
     return hits
 
 
+def _index_status(vault: Path) -> dict[str, Any]:
+    """Report index freshness so readers can detect a stale `_index.json`.
+
+    `stale` is True when any entity file has been modified more recently than
+    the index was built — i.e. a write happened without a reindex. In normal
+    operation every mutating pass reindexes, so this stays False; it surfaces
+    the multi-writer edge where a direct file edit bypassed the pipeline.
+    """
+    idx = vault / "_index.json"
+    if not idx.exists():
+        return {"generated": None, "count": 0, "stale": True}
+    try:
+        data = json.loads(idx.read_text(encoding="utf-8"))
+        generated = data.get("generated")
+        count = int(data.get("count", 0))
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {"generated": None, "count": 0, "stale": True}
+    idx_mtime = idx.stat().st_mtime
+    stale = False
+    for f in glob.glob(os.path.join(str(vault), "entities", "*", "*.md")):
+        try:
+            if os.path.getmtime(f) > idx_mtime + 1:  # 1s slack for write ordering
+                stale = True
+                break
+        except OSError:
+            continue
+    return {"generated": generated, "count": count, "stale": stale}
+
+
 def _last_run(vault: Path) -> dict[str, Any] | None:
     """Last line of discovery/_runs.jsonl (shape from cadences/run_cadence.py)."""
     runs = read_jsonl(vault / "discovery" / "_runs.jsonl")
@@ -147,6 +179,7 @@ async def get_status(s: Settings = Depends(get_settings)) -> dict[str, Any]:
         "expiring": _expiring_items(ents),
         "breakdown": breakdown,
         "last_run": _last_run(vault),
+        "index": _index_status(vault),
     }
 
 
@@ -166,3 +199,24 @@ async def ask(
     if "expir" in ql or "renew" in ql:
         return {"intent": "expiring", "items": _expiring_items(ents)}
     return {"intent": "find", "items": _find_items(ents, q)}
+
+
+@router.get("/answer")
+async def answer(
+    q: str = Query(..., description="Natural-language question"),
+    k: int = Query(5, ge=1, le=20),
+    mode: str = Query("hybrid", pattern="^(fts|semantic|hybrid)$"),
+    s: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Grounded, cited RAG answer over the vault (O4.3).
+
+    Retrieves the top-`k` entities (via `mode`), hands only their prose to a
+    local model, and requires citations — reported citations are intersected
+    with what was retrieved, so the answer can't cite outside its context.
+    `grounded` is False when the answer cited nothing. Distinct from GET
+    /api/ask (deterministic routing, no LLM). Returns {question, answer,
+    citations, sources, grounded, client}.
+    """
+    from agent_vault import rag
+
+    return rag.answer(str(Path(s.vault_path)), q, k=k, mode=mode)

@@ -421,3 +421,87 @@ def test_entities_response_shape_matches_synapsenas():
     data = response.json()
     assert set(data.keys()) == {"items"}
     assert set(data["items"][0].keys()) == {"slug", "title", "ref", "backend"}
+
+
+def test_entity_detail_404_when_file_deleted_after_index():
+    """B9: an entity present in the index but whose file was removed (concurrent
+    mutation) returns 404, not an unhandled 500."""
+    vault = create_test_vault()
+    # Remove the on-disk file while the index still lists it.
+    (vault / "entities" / "account" / "bofa-checking.md").unlink()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    assert client.get("/api/entities/bofa-checking").status_code == 404
+
+
+def test_status_reports_index_freshness():
+    """O7: GET /api/status carries an index freshness block."""
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/status").json()
+    assert "index" in data
+    assert set(data["index"].keys()) >= {"generated", "count", "stale"}
+
+
+def test_search_endpoint_empty_query():
+    """GET /api/search with no query returns an empty hit list, not an error."""
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search").json()
+    assert data["query"] == ""
+    assert data["hits"] == []
+    assert "fts" in data
+
+
+def test_search_endpoint_finds_prose_only_term():
+    """GET /api/search finds a term that appears only in the prose body, which
+    the metadata-only GET /api/entities filter cannot (O4.1 headline win)."""
+    from agent_vault import search
+
+    vault = create_test_vault()
+    # Build the FTS sidecar over the on-disk entity files.
+    if search.fts5_available():
+        search.build_search_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+
+    # "household" appears in bofa-checking's PROSE, never its metadata.
+    data = client.get("/api/search", params={"q": "household"}).json()
+    slugs = [h["slug"] for h in data["hits"]]
+    if search.fts5_available():
+        assert "bofa-checking" in slugs
+        assert set(data["hits"][0].keys()) >= {
+            "slug", "title", "type", "subtype", "status", "path", "score", "snippet",
+        }
+    # The metadata filter cannot match a prose-only term:
+    meta = client.get("/api/entities", params={"q": "household"}).json()
+    assert meta["rows"] == []
+
+
+def test_search_endpoint_respects_limit():
+    vault = create_test_vault()
+    from agent_vault import search
+    if search.fts5_available():
+        search.build_search_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search", params={"q": "account", "limit": 1}).json()
+    assert len(data["hits"]) <= 1
+
+
+def test_search_endpoint_semantic_mode(monkeypatch):
+    """GET /api/search?mode=semantic ranks via the vector index (O4.2)."""
+    monkeypatch.setenv("AGENT_VAULT_EMBEDDER", "mock")
+    from agent_vault import semantic
+    vault = create_test_vault()
+    semantic.build_vector_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search", params={"q": "household checking", "mode": "semantic"}).json()
+    assert data["mode"] == "semantic"
+    assert data["semantic"] is True
+    assert data["hits"]  # some ranked results
+    assert "score" in data["hits"][0]
+
+
+def test_search_endpoint_rejects_bad_mode():
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    r = client.get("/api/search", params={"q": "x", "mode": "nonsense"})
+    assert r.status_code == 422  # pattern-validated query param

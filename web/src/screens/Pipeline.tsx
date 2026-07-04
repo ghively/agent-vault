@@ -11,6 +11,10 @@ import type { Run } from "../api/types";
 // cadence on the host.
 const WEEKLY_OPS = ["ingest", "compile", "promote"] as const;
 
+// Abort a job whose SSE stream goes silent for this long (a hung/never-ending
+// stage) so the UI can't get stuck "running" forever (F2).
+const STALL_MS = 120_000;
+
 const STAGES = [
   {
     name: "INGEST",
@@ -72,32 +76,61 @@ export function Pipeline() {
   const [lines, setLines] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  const abortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
+  // Abort any in-flight stream when the window/component unmounts so the fetch
+  // doesn't keep running in the background (F2).
+  useEffect(() => () => {
+    mountedRef.current = false;
+    abortRef.current?.abort();
+  }, []);
 
   /** Run ops in sequence; stop (and report which stage failed) on the first
-   *  job whose SSE "end" is not completed/rc 0. */
+   *  job whose SSE "end" is not completed/rc 0. Abortable + stall-guarded. */
   async function runOps(label: string, ops: readonly string[]) {
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    cancelledRef.current = false;
     setRunning(true);
     setErrorMsg(null);
     setJobLabel(label);
     setJobState("running");
     setJobRc(null);
     setLines([]);
-    const append = (l: string) => { if (mountedRef.current) setLines((p) => [...p, l]); };
+
+    // Stall watchdog: abort if no SSE line arrives for STALL_MS. Reset on every
+    // line and at the start of each stage.
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const armStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => { cancelledRef.current = false; ctrl.abort(); }, STALL_MS);
+    };
+    const append = (l: string) => {
+      armStall();
+      if (mountedRef.current) setLines((p) => [...p, l]);
+    };
+
     try {
       for (const op of ops) {
         if (ops.length > 1) append(`── stage: ${op} ──`);
+        armStall();
         const id = await startJob(op, []);
-        const res = await streamJob(id, append);
+        const res = await streamJob(id, append, ctrl.signal);
         if (!mountedRef.current) return;
         setJobRc(res.rc);
         if (res.state !== "done" || (res.rc ?? 1) !== 0) {
           setJobState("error");
-          setErrorMsg(
-            ops.length > 1
-              ? `weekly run failed at stage "${op}"${res.rc != null ? ` (rc=${res.rc})` : ""} — later stages skipped`
-              : `${op} failed${res.rc != null ? ` (rc=${res.rc})` : ""}`,
-          );
+          if (ctrl.signal.aborted) {
+            setErrorMsg(cancelledRef.current
+              ? `run cancelled at stage "${op}"`
+              : `stage "${op}" stalled (no output for ${STALL_MS / 1000}s) — aborted`);
+          } else {
+            setErrorMsg(
+              ops.length > 1
+                ? `weekly run failed at stage "${op}"${res.rc != null ? ` (rc=${res.rc})` : ""} — later stages skipped`
+                : `${op} failed${res.rc != null ? ` (rc=${res.rc})` : ""}`,
+            );
+          }
           return;
         }
       }
@@ -107,10 +140,21 @@ export function Pipeline() {
       setJobState("error");
       setErrorMsg(e instanceof Error ? e.message : "failed to start the job");
     } finally {
+      clearTimeout(stallTimer);
+      abortRef.current = null;
       if (mountedRef.current) setRunning(false);
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["ledgers"] });
+      // A compile/promote job changes entity status + the review queue; refresh
+      // the dashboard/review-driven queries too, not just runs/ledgers.
+      qc.invalidateQueries({ queryKey: ["status"] });
+      qc.invalidateQueries({ queryKey: ["review"] });
     }
+  }
+
+  function handleCancel() {
+    cancelledRef.current = true;
+    abortRef.current?.abort();
   }
 
   function handleRunWeekly() {
@@ -276,6 +320,23 @@ export function Pipeline() {
             >
               Dry run
             </button>
+            {running && (
+              <button
+                onClick={handleCancel}
+                style={{
+                  cursor: "pointer",
+                  fontSize: 12,
+                  padding: "7px 15px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,95,86,0.6)",
+                  color: C.red,
+                  background: "transparent",
+                  fontFamily: FONT_MONO,
+                }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
 
           {/* Error banner — job-start failures and failed stages */}

@@ -103,19 +103,39 @@ def cmd_find(args, ents, aliases):
     q = norm(" ".join(args))
     if not q:
         sys.exit("usage: synapse find <text>")
-    hits = []
+    # Prefer ranked, prose-aware full-text search (search.py); it reads INSIDE
+    # the compiled prose bodies and orders by relevance. Falls back internally
+    # to a metadata token-overlap scan when the FTS sidecar isn't built.
+    try:
+        from agent_vault import search
+        hits = search.search(VAULT, q, limit=50)
+    except Exception:  # noqa: BLE001 - never let search break the CLI
+        hits = []
+    if hits:
+        for h in hits:
+            line = (f"  {h['slug']:30}  {h.get('type','')}/{h.get('subtype','')}"
+                    f"  — {h.get('title','')}")
+            print(line)
+            snip = h.get("snippet")
+            if snip:
+                print(f"       … {snip} …")
+        print(f"\n{len(hits)} match(es)")
+        return
+    # Last-resort: the original substring scan over the loaded index. Reached
+    # only when search.py returned nothing (e.g. no _index.json AND no db).
+    q_hits = []
     for e in ents:
         hay = " ".join([e.get("slug", ""), e.get("title", ""), e.get("type", ""),
                         e.get("subtype", ""), " ".join(e.get("tags", [])),
                         " ".join(e.get("_match", []))]).lower()
         if q in hay:
-            hits.append(e)
-    if not hits:
+            q_hits.append(e)
+    if not q_hits:
         print(f"no matches for '{q}'")
         return
-    for e in hits:
+    for e in q_hits:
         print(f"  {e['slug']:30}  {e.get('type','')}/{e.get('subtype','')}  — {e.get('title','')}")
-    print(f"\n{len(hits)} match(es)")
+    print(f"\n{len(q_hits)} match(es)")
 
 
 def cmd_show(args, ents, aliases):

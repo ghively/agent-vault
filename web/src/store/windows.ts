@@ -104,7 +104,7 @@ const initial = () => ({
 
 export const useWindows = create<WinState>((set, get) => ({
   ...initial(),
-  openApp: (id, slug) => {
+  openApp: (id, _slug) => {
     const st = get();
     if (st.open.includes(id)) { get().focus(id); set({ launcherOpen: false }); return; }
     const zTop = st.zTop + 1;

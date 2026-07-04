@@ -76,11 +76,14 @@ def parse_entity(path, vault="."):
     return rec
 
 
-def main():
-    args = sys.argv[1:]
-    if args and args[0] in ("-h", "--help"):
-        print(__doc__); return 0
-    vault = args[0] if args else "."
+def reindex(vault, quiet=False):
+    """Rebuild _index.json + _index.md + the FTS sidecar from entities/.
+
+    The single, argv-free entry point every mutating pass should call after it
+    changes an entity file, so readers (find/show/`GET /api/*`) never serve a
+    stale index. Returns the entity count. `quiet` suppresses stdout (used by
+    in-process callers). Deterministic; safe to call under the vault lock.
+    """
     files = sorted(glob.glob(os.path.join(vault, "entities", "*", "*.md")))
     entities = [r for r in (parse_entity(f, vault) for f in files) if r]
 
@@ -116,7 +119,33 @@ def main():
         f.flush(); os.fsync(f.fileno())
     os.replace(tmp, out_md)
 
-    print(f"indexed {len(entities)} entities -> {out_json}")
+    if not quiet:
+        print(f"indexed {len(entities)} entities -> {out_json}")
+
+    # Refresh the full-text search sidecar (_index.db) from the same entities.
+    # Best-effort: a search-index failure must never fail the structural index
+    # build that retrieval's correctness depends on. FTS is an accelerator; the
+    # substring fallback in search.py covers its absence.
+    try:
+        from agent_vault import search
+        n = search.build_search_index(vault)
+        if not quiet and n:
+            print(f"search index: {n} entities -> {os.path.join(vault, search.DB_NAME)}")
+        elif not quiet and not search.fts5_available():
+            print("search index: FTS5 unavailable; retrieval uses substring fallback",
+                  file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 - never let search indexing abort build
+        print(f"warn: search index build skipped ({type(e).__name__}: {e})",
+              file=sys.stderr)
+    return len(entities)
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__); return 0
+    vault = args[0] if args else "."
+    reindex(vault)
 
 
 if __name__ == "__main__":

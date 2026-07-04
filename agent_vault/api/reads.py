@@ -44,8 +44,16 @@ def load_index(vault: Path) -> list[dict[str, Any]]:
 
 
 def parse_entity_file(path: Path) -> dict[str, Any]:
-    """Parse entity .md file into frontmatter, links_block, and prose."""
-    raw = path.read_text(encoding="utf-8")
+    """Parse entity .md file into frontmatter, links_block, and prose.
+
+    Returns {} if the file vanished (a concurrent mutating job can delete/rename
+    it between the index load and this read) or is malformed — the caller then
+    404s cleanly instead of surfacing an unhandled 500 (B9).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
     m = _FM_RE.match(raw)
     if not m:
         return {}
@@ -137,7 +145,8 @@ async def list_entities(
     vault = Path(s.vault_path)
     rows = []
     ql = q.strip().lower()
-    for e in load_index(vault):
+    index = load_index(vault)  # bind once; reused for the total below (B8)
+    for e in index:
         ts = f"{e.get('type', '')}/{e.get('subtype', '')}"
         if type_ and e.get("type") != type_:
             continue
@@ -163,7 +172,41 @@ async def list_entities(
                 "tags": e.get("tags", []),
             }
         )
-    return {"rows": rows, "total": len(load_index(vault))}
+    return {"rows": rows, "total": len(index)}
+
+
+@router.get("/search")
+async def search_entities(
+    q: str = Query("", description="free-text query over prose + metadata"),
+    limit: int = Query(20, ge=1, le=200),
+    mode: str = Query("fts", pattern="^(fts|semantic|hybrid)$"),
+    s: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Ranked retrieval over entity prose AND metadata.
+
+    `mode`:
+      - `fts` (default) — prose-aware bm25 via the FTS5 sidecar (`_index.db`),
+        with a metadata token-overlap fallback. No model needed.
+      - `semantic` — embedding cosine over the vector index (`_vectors.db`,
+        built via `python -m agent_vault.semantic build`). Empty if not built.
+      - `hybrid` — reciprocal-rank fusion of fts + semantic.
+
+    Unlike GET /api/entities (a metadata filter), this is the agent-facing
+    *retrieval* surface. Returns {query, mode, hits:[{slug,title,type,subtype,
+    status,path,score,snippet}], fts, semantic} where the last two report which
+    ranked paths are live.
+    """
+    from agent_vault import search as search_mod
+    from agent_vault import semantic as semantic_mod
+
+    vault = Path(s.vault_path)
+    query = q.strip()
+    caps = {"fts": search_mod.fts5_available(),
+            "semantic": semantic_mod.semantic_available(str(vault))}
+    if not query:
+        return {"query": "", "mode": mode, "hits": [], **caps}
+    hits = search_mod.search(str(vault), query, limit, mode=mode)
+    return {"query": query, "mode": mode, "hits": hits, **caps}
 
 
 def build_entity_detail(vault: Path, slug: str, path: Path) -> dict[str, Any]:
@@ -174,6 +217,9 @@ def build_entity_detail(vault: Path, slug: str, path: Path) -> dict[str, Any]:
     """
     by_slug = {e["slug"]: e for e in load_index(vault) if e.get("slug")}
     parsed = parse_entity_file(path)
+    if not parsed:
+        # File vanished (concurrent mutation) or is unparseable — 404, not 500.
+        raise HTTPException(status_code=404, detail="entity file not readable")
     fm = parsed.get("frontmatter", {})
 
     # Resolve links

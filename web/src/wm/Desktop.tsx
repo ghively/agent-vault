@@ -5,7 +5,6 @@ import { Launcher } from "./Launcher";
 import { CommandBar } from "./CommandBar";
 import { Window } from "./Window";
 import { QuickPanel } from "./QuickPanel";
-import { APPS } from "./apps";
 
 import bgServer from "../assets/bg_server.png";
 
@@ -44,7 +43,6 @@ html,body{margin:0;height:100%;background:#040804;overflow:hidden;}
 export function Desktop() {
   const open = useWindows((s) => s.open);
   const panelOpen = useWindows((s) => s.panelOpen);
-  const commandBarOpen = useWindows((s) => s.commandBarOpen);
   const toggleCommandBar = useWindows((s) => s.toggleCommandBar);
   const desktopScale = useWindows((s) => s.desktopScale);
   const deskRef = useRef<HTMLDivElement>(null);

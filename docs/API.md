@@ -43,18 +43,41 @@ API spawns (`POST /api/jobs/run`). These four (and ONLY these four) can be
 changed at runtime via `POST /api/config/apply`, which validates and writes
 them into `os.environ` so subsequent jobs inherit them.
 
+Retrieval/answer env vars affect the in-process read endpoints directly (not
+just spawned jobs): `GET /api/search?mode=semantic` uses `AGENT_VAULT_EMBEDDER`
+(`ollama`|`mock`) + `OLLAMA_EMBED_MODEL`; `GET /api/answer` uses
+`AGENT_VAULT_RAG` (`ollama`|`mock`) + `AGENT_VAULT_RAG_CONTEXT_CHARS`. Each has a
+deterministic offline `mock` so the service runs with no model. Auth tokens come
+from `VAULT_TOKEN` / `VAULT_TOKENS` / `registry/tokens.yaml` (see Auth model).
+
 There is no CORS middleware and no other service-level configuration.
 
 ## Auth model
 
-`agent_vault/api/auth.py` builds a FastAPI dependency from `VAULT_TOKEN`:
+`agent_vault/api/auth.py` resolves each caller to an **Identity** (`actor` +
+`scopes`) and gates by scope (O5/O6). It is backward-compatible with the old
+single-token model:
 
-- If `VAULT_TOKEN` is unset/empty, the dependency is a no-op — every `/api/*`
-  route is open.
-- If set, every `/api/*` route **except `/api/health`** requires
-  `Authorization: Bearer <token>`; a missing or mismatched token gets `401`.
-  Token comparison is constant-time (`secrets.compare_digest`), so response
-  timing can't leak token prefixes.
+- If **no** token is configured anywhere, auth is a no-op — every `/api/*` route
+  is open (actor `anonymous`, all scopes).
+- `VAULT_TOKEN=<t>` (legacy) — one token, **all scopes**, actor `vault-token`.
+  Every `/api/*` route except `/api/health` then requires `Authorization: Bearer
+  <t>`; missing/invalid → `401`. Comparison is constant-time
+  (`secrets.compare_digest`), so timing can't leak token prefixes.
+- **Per-agent tokens** — for a shared multi-agent deployment, map tokens to
+  actors + scopes via either source (merged; the legacy `VAULT_TOKEN` stays an
+  admin token):
+  - `VAULT_TOKENS` env — JSON `{"<token>": {"actor": "...", "scopes": ["read","write","resolve"]}}`
+  - `registry/tokens.yaml` — `tokens: {<token>: {actor: ..., scopes: [...]}}` (human-authored)
+- **Scopes** gate by request shape, so no per-endpoint wiring: `read` = GET/HEAD;
+  `write` = POST/PUT/PATCH/DELETE; `resolve` = `POST /api/creds/{slug}/resolve`
+  (returns plaintext). `admin` implies all. A valid token lacking the required
+  scope gets **`403`** (distinct from `401` for a missing/unknown token).
+- **Access audit**: every mutating or resolve call is appended to
+  `discovery/_access.jsonl` as `{ts, actor, method, path, status, scope, action,
+  target}` — never bodies or secrets (a resolve line carries only the slug +
+  status). Reads are not audited. The recorder is a pure-ASGI middleware, so it
+  doesn't buffer the SSE job stream.
 - `/api/health` is deliberately **unauthenticated**: LB/orchestrator liveness
   probes can't send bearer tokens. It returns only `{"ok": true}` — no vault
   data.
@@ -76,7 +99,8 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/health` | no | Liveness check → `{"ok": true}` (open so LB/orchestrator probes work; liveness info only) |
-| GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters |
+| GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters (metadata substring only — for ranked prose-aware search use `/api/search`) |
+| GET | `/api/search` | yes* | Ranked retrieval over prose **and** metadata: `?q=<query>&limit=<n>&mode=<fts\|semantic\|hybrid>` (default `fts`) → `{"query", "mode", "hits": [{slug,title,type,subtype,status,path,score,snippet}], "fts": <bool>, "semantic": <bool>}`. `fts`=prose-aware bm25 (metadata fallback if `fts:false`); `semantic`=embedding cosine (needs `_vectors.db`, built via `python -m agent_vault.semantic build`); `hybrid`=rank-fusion of both. The `fts`/`semantic` flags report which ranked paths are live. |
 | GET | `/api/entities/{slug}` | yes* | Full entity record: prose, facts, sources, resolved links |
 | PATCH | `/api/entities/{slug}` | yes* | Edit only `title`/`tags`/`notes` frontmatter fields (line-targeted; validated + rolled back on failure) → same shape as `GET /api/entities/{slug}` |
 | GET | `/api/schema` | yes* | Vault taxonomy for UI pickers: `{"types": [{"type", "subtypes": [...]}], "tags": [...]}` (sorted, includes `unknown`) |
@@ -95,11 +119,13 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | POST | `/api/jobs/run` | yes* | Start a pipeline stage as a subprocess. Body: `{"op": "ingest"\|"compile"\|"promote"\|"reclassify_apply"\|"lint"\|"compact", "args": []}` → `{"job_id", "status"}`. Unknown op → `422`; args outside the per-op allowlist (see below) → `400` |
 | GET | `/api/jobs/{job_id}` | yes* | Poll job status: `{"job_id", "status", "returncode", "stdout": [...last 100 lines], "stderr": [...]}` |
 | GET | `/api/jobs/{job_id}/stream` | yes* | **Server-Sent Events** stream of live `stdout`/`stderr` lines, ending in an `end` event with `{"status", "returncode"}` |
+| DELETE | `/api/jobs/{job_id}` | yes* | Cancel a running job (terminates its subprocess) → `{"job_id", "status", "cancelled"}`. Unknown → `404`; cancelling a finished job is an idempotent no-op (`cancelled:false`) |
 | GET | `/api/runs` | yes* | Cadence run history from `discovery/_runs.jsonl`, newest-first. `?limit=50` (0–1000) |
 | GET | `/api/ledgers` | yes* | Entry counts for `discovery/proposals.jsonl`, `discovery/promoted.jsonl`, `raw/_manifest.jsonl` |
 | GET | `/api/settings` | yes* | Read-only config overview: service (host/port/vault_path/auth_enabled), vault (entity_count/index_built), compiler (prompt_contract_version/ollama_model), resolvers (default + configured backends), cadences (files present) |
 | GET | `/api/status` | yes* | Dashboard snapshot: `{"counts": {total, compiled, needs_review}, "due": [...], "expiring": [...], "breakdown": {<type>: n}, "last_run": {...}\|null}` (see shapes below) |
 | GET | `/api/ask?q=<str>` | yes* | Deterministic query routing (no LLM): → `{"intent": "due"\|"expiring"\|"find", "items": [...]}`. Missing `q` → `422`; empty `q` → empty find result |
+| GET | `/api/answer?q=<str>&k=<n>&mode=<fts\|semantic\|hybrid>` | yes* | Grounded, **cited** RAG answer (O4.3): retrieves top-`k`, constrains a local model to that prose → `{"question","answer","citations":[{slug,title,type,path}],"sources":[...],"grounded":<bool>,"client"}`. Citations are intersected with retrieved context (can't cite outside it); `grounded:false` = the answer cited nothing. Distinct from `/api/ask`. Needs a local model (or `AGENT_VAULT_RAG=mock`). |
 | GET | `/api/config` | yes* | Runtime pipeline config: `{"env": {...}, "thresholds": {...}, "resolvers": [{"name","detail"}]}` (see shapes below) |
 | POST | `/api/config/apply` | yes* | Apply allowlisted env changes. Body: `{"env"?: {...}, "thresholds"?: {...}}` → same shape as `GET /api/config`. Unknown env keys / invalid values / any `thresholds` → `400` |
 | GET | `/docs`, `/redoc`, `/openapi.json` | no | FastAPI's auto-generated Swagger UI / ReDoc / OpenAPI schema |

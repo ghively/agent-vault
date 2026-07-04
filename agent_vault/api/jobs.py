@@ -11,10 +11,12 @@ import asyncio
 import os
 import re
 import sys
+import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -192,6 +194,12 @@ class JobRegistry:
 # Global registry instance
 _registry = JobRegistry()
 
+# Strong references to in-flight job tasks. asyncio keeps only a WEAK reference
+# to a bare create_task() result, so without this a running job can be
+# garbage-collected mid-execution. We hold the task until it finishes, then let
+# the done-callback drop it. See docs/AUDIT.md D2.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def get_registry() -> JobRegistry:
     """Get the global job registry.
@@ -260,6 +268,40 @@ def _vault_env(vault_path: Path) -> dict[str, str]:
     return env
 
 
+def _record_run(job: Job, vault_path: Path, duration_s: int) -> None:
+    """Append one job-completion record to discovery/_runs.jsonl.
+
+    API-triggered runs are a third invocation path alongside the .sh cadences
+    and run_cadence.py; without this, GET /api/runs and the dashboard's
+    last_run silently omit every run started from the web UI. The record shape
+    matches cadences/run_cadence.py:record_run ({cadence, ts, rc, duration_s,
+    detail}) so history.py and status.py read it unchanged; source/job_id are
+    additive so a web run is still distinguishable. Best-effort: never raises
+    into the job coroutine. See docs/AUDIT.md D2.
+    """
+    try:
+        discovery = vault_path / "discovery"
+        discovery.mkdir(exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        detail = "ok"
+        if job.status == "failed":
+            tail = job.stderr[-1] if job.stderr else f"rc={job.returncode}"
+            detail = tail[:200]
+        rec = {
+            "cadence": job.op,
+            "ts": ts,
+            "rc": job.returncode if job.returncode is not None else -1,
+            "duration_s": duration_s,
+            "detail": detail,
+            "source": "api-job",
+            "job_id": job.id,
+        }
+        with open(discovery / "_runs.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001 - history recording must never abort a job
+        pass
+
+
 async def run_job(job: Job, vault_path: Path) -> None:
     """Execute a job subprocess and capture output.
 
@@ -270,6 +312,7 @@ async def run_job(job: Job, vault_path: Path) -> None:
     job.status = "running"
     cmd = _build_command(job.op, job.args)
     env = _vault_env(vault_path)
+    started = time.monotonic()
 
     try:
         # Create subprocess with isolated environment
@@ -309,6 +352,11 @@ async def run_job(job: Job, vault_path: Path) -> None:
         job.add_stderr(f"Job failed: {type(e).__name__}: {e}")
         job.returncode = job.returncode if job.returncode is not None else -1
         job.status = "failed"
+    finally:
+        # Record every terminal outcome (success OR failure) to the shared run
+        # history, so the web-triggered path honors the same _runs.jsonl
+        # contract the cadence paths do.
+        _record_run(job, vault_path, int(time.monotonic() - started))
 
 
 # Create router
@@ -354,8 +402,11 @@ async def run_job_endpoint(
     # Get vault path from settings
     vault_path = Path(settings.vault_path)
 
-    # Start job in background
-    asyncio.create_task(run_job(job, vault_path))
+    # Start job in background, holding a strong reference so the task can't be
+    # garbage-collected before it completes (see _background_tasks).
+    task = asyncio.create_task(run_job(job, vault_path))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return JSONResponse(
         content={
@@ -397,6 +448,35 @@ async def get_job_status(job_id: str) -> JSONResponse:
             "stderr": stderr_tail,
         }
     )
+
+
+@router.delete("/jobs/{job_id}")
+async def cancel_job(job_id: str) -> JSONResponse:
+    """Cancel a running job by terminating its subprocess (B7).
+
+    404 if the job is unknown. A job that already finished is returned as-is
+    (idempotent — cancelling a completed job is a no-op, not an error).
+    """
+    registry = get_registry()
+    job = registry.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.status in ("completed", "failed"):
+        return JSONResponse(content={"job_id": job.id, "status": job.status,
+                                     "cancelled": False})
+    proc = job.proc
+    if proc is not None and proc.returncode is None:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass  # already exited between the check and here
+    job.status = "failed"
+    if job.returncode is None:
+        job.returncode = -1
+    job.add_stderr("job cancelled by request")
+    return JSONResponse(content={"job_id": job.id, "status": job.status,
+                                 "cancelled": True})
 
 
 @router.get("/jobs/{job_id}/stream")

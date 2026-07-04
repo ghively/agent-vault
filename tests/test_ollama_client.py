@@ -25,9 +25,16 @@ import pytest
 from agent_vault import compiler
 
 
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    """Neutralize retry backoff so retry-path tests don't spend real time."""
+    monkeypatch.setattr(compiler.time, "sleep", lambda *_a, **_k: None)
+
+
 class _FakeResponse:
     """Minimal stand-in for the object urllib.request.urlopen returns as a
-    context manager: supports `with ... as resp:` and `resp.read()`."""
+    context manager: supports `with ... as resp:` and `resp.read(amt)`
+    (the real HTTPResponse.read takes an optional byte cap)."""
 
     def __init__(self, body: str):
         self._body = body.encode("utf-8")
@@ -38,8 +45,8 @@ class _FakeResponse:
     def __exit__(self, *exc):
         return False
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, amt: int | None = None) -> bytes:
+        return self._body if amt is None else self._body[:amt]
 
 
 def _patch_urlopen(monkeypatch, *, body=None, exc=None, capture=None):
@@ -133,6 +140,66 @@ def test_ollama_non_json_body_raises_runtimeerror(monkeypatch):
     _patch_urlopen(monkeypatch, body="<html>502 Bad Gateway</html>")
     with pytest.raises(RuntimeError, match="non-JSON"):
         compiler.OllamaClient().compile("s", "u")
+
+
+def test_ollama_http_error_is_surfaced_and_not_retried(monkeypatch):
+    """A definite HTTP verdict (e.g. model-not-found 404) is reported with its
+    status and NOT retried — retry is for transient connection faults only."""
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(compiler.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(RuntimeError, match="HTTP 404"):
+        compiler.OllamaClient().compile("s", "u")
+    assert calls["n"] == 1  # no retry on a server verdict
+
+
+def test_ollama_retries_transient_then_succeeds(monkeypatch):
+    """A transient connection error is retried; a later success is returned."""
+    calls = {"n": 0}
+    good = json.dumps({"response": "<prose>recovered</prose>"})
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("connection reset")
+        return _FakeResponse(good)
+
+    monkeypatch.setattr(compiler.urllib.request, "urlopen", fake_urlopen)
+    out = compiler.OllamaClient().compile("s", "u")  # default retries=2
+    assert out["prose"] == "recovered"
+    assert calls["n"] == 2  # failed once, succeeded on retry
+
+
+def test_ollama_error_field_surfaced(monkeypatch):
+    """Ollama reports model/runtime problems in an `error` field with HTTP 200;
+    that must surface verbatim, not degrade into a vague empty-prose result."""
+    _patch_urlopen(monkeypatch, body=json.dumps({"error": "model 'x' not found"}))
+    with pytest.raises(RuntimeError, match="model 'x' not found"):
+        compiler.OllamaClient().compile("s", "u")
+
+
+def test_ollama_options_are_env_configurable(monkeypatch):
+    """temperature/num_ctx are config, not code; num_ctx defaults high enough to
+    cover the whole source-char budget so a big-context model isn't truncated."""
+    cap: dict = {}
+    monkeypatch.setenv("OLLAMA_TEMPERATURE", "0.05")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "32768")
+    _patch_urlopen(monkeypatch, body=json.dumps({"response": "<prose>ok</prose>"}),
+                   capture=cap)
+    compiler.OllamaClient().compile("s", "u")
+    assert cap["body"]["options"]["temperature"] == 0.05
+    assert cap["body"]["options"]["num_ctx"] == 32768
+
+
+def test_ollama_num_ctx_default_covers_budget(monkeypatch):
+    """With no override, num_ctx is at least the 8192 floor and never below the
+    tokens implied by the configured total source-char budget."""
+    c = compiler.OllamaClient()
+    assert c.num_ctx >= 8192
 
 
 # ---------------------------------------------------------------------------

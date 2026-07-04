@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useCreds } from "../api/hooks";
 import { resolveSecret } from "../api/resolve";
+import { useFocusTrap } from "../ui/useFocusTrap";
 import { C, FONT_MONO } from "../theme";
 import type { Cred } from "../api/types";
 
@@ -176,6 +177,10 @@ interface ResolveModalProps {
 function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Trap Tab within the dialog and restore focus to the trigger on close (F5).
+  useFocusTrap(dialogRef);
 
   // Escape closes (and clears any revealed secret); focus the confirm button
   // when the dialog opens.
@@ -201,6 +206,7 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Resolve secret for ${slug}`}

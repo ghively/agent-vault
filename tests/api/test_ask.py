@@ -126,3 +126,48 @@ def test_ask_empty_q_is_empty_find():
     response = client.get("/api/ask", params={"q": ""})
     assert response.status_code == 200
     assert response.json() == {"intent": "find", "items": []}
+
+
+def _rag_vault() -> Path:
+    """On-disk vault (entity files + index) so RAG can load prose."""
+    import sys
+    from agent_vault import build_index
+    vault = Path(tempfile.mkdtemp())
+    d = vault / "entities" / "asset"
+    d.mkdir(parents=True)
+    (d / "carrier-furnace.md").write_text(
+        "---\nslug: carrier-furnace\ntype: asset\nsubtype: hvac\n"
+        "title: Carrier Furnace\nstatus: compiled\n---\n\n"
+        "<!-- LINKS:BEGIN -->\n<!-- LINKS:END -->\n\n"
+        "The gas furnace serves the whole-house forced-air heating system.\n",
+        encoding="utf-8")
+    argv = sys.argv
+    sys.argv = ["build_index", str(vault)]
+    try:
+        build_index.main()
+    finally:
+        sys.argv = argv
+    return vault
+
+
+def test_answer_endpoint_grounded_and_cited(monkeypatch):
+    """GET /api/answer returns a grounded, cited RAG answer (O4.3)."""
+    monkeypatch.setenv("AGENT_VAULT_RAG", "mock")
+    vault = _rag_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/answer", params={"q": "furnace heating", "mode": "fts"}).json()
+    assert data["grounded"] is True
+    assert any(c["slug"] == "carrier-furnace" for c in data["citations"])
+    assert data["client"] == "mock-rag"
+
+
+def test_answer_endpoint_rejects_bad_mode():
+    vault = _rag_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    assert client.get("/api/answer", params={"q": "x", "mode": "bad"}).status_code == 422
+
+
+def test_answer_endpoint_requires_q():
+    vault = _rag_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    assert client.get("/api/answer").status_code == 422

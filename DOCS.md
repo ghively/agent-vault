@@ -77,7 +77,14 @@ samples. The *AI step* needs an external server you provide.
 | `reclassify_apply.py` — apply approved re-filings | ✅ **Real, working** | Two-phase, crash-recoverable. |
 | `lint.py` — anomaly report | ✅ **Real, working** | Read-only. |
 | `collections_importer.py` — Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV | ✅ **Real, working** | Bookkeeping import. |
-| `validate.py` — schema gate | ✅ **Real, working** | The smoke test every stage reuses. |
+| `validate.py` — schema gate | ✅ **Real, working** | The smoke test every stage reuses. Now also gates the `schema.yaml` **version** (`SCHEMA_VERSION`). |
+| `search.py` — full-text ranked search | ✅ **Real, working** | SQLite **FTS5** sidecar (`_index.db`) over entity **prose + metadata**, bm25-ranked; substring fallback when FTS5 is absent. Powers `agent-vault find` and `GET /api/search`. Deterministic, no model. |
+| `embeddings.py` + `semantic.py` — semantic / hybrid search | ✅ **Real, working** | Pluggable embedder (Ollama `/api/embeddings`, or a deterministic offline `MockEmbedder`); vector sidecar (`_vectors.db`) + cosine; `hybrid` = reciprocal-rank fusion of FTS+semantic. `AGENT_VAULT_EMBEDDER=ollama\|mock`. Read-side only. |
+| `rag.py` — grounded, cited answers | ✅ **Real, working** | Retrieves top-k, constrains a **local** model to that prose, returns an answer with **verified citations** (`grounded` flag). Pluggable answerer (Ollama or offline `MockAnswerer`, `AGENT_VAULT_RAG=ollama\|mock`). Powers `GET /api/answer` + the `vault_ask` MCP tool. Never writes vault state. |
+| `mcp_tools.py` + `mcp_server.py` — MCP server | ✅ **Real, working** | `agent-vault-mcp` (optional `[mcp]` extra) exposes 7 tools (`vault_search`/`ask`/`get`/`list`/`status`/`submit_source`/`resolve_credential`). Reads lock-free; the only write (`submit_source`) is append-only into `raw/` with actor attribution; secret resolution is opt-in (`AGENT_VAULT_MCP_ALLOW_RESOLVE=1`). |
+| `migrate.py` — schema versioning | ✅ **Real, working** | `agent-vault-migrate check/apply`; walks a vault from its stamped `schema.yaml` version up to `SCHEMA_VERSION`. No migrations registered yet (v1 is current); the concrete protection today is the validate gate. |
+| `backup.py` — vault snapshot / export / restore | ✅ **Real, working** | `agent-vault-backup export/restore/list`; tar.gz of entities/registry/discovery (+`--include-raw`). Safe extraction (no traversal), refuses to clobber a non-empty vault without `--force`, reindexes on restore. Derived indexes excluded (rebuilt). |
+| `api/auth.py` + `api/audit.py` — per-agent auth & access audit | ✅ **Real, working** | Per-agent tokens → `Identity(actor, scopes)` (`read`/`write`/`resolve`) via `VAULT_TOKEN` (legacy admin), `VAULT_TOKENS` env, or `registry/tokens.yaml`. A pure-ASGI middleware audits every write/resolve to `discovery/_access.jsonl` (never bodies/secrets). |
 | `cadences/*.sh` — daily/weekly/monthly wrappers | ✅ **Real, working** | Plain POSIX `sh`; wire to any runner. |
 | **Credential resolution** (turn a `creds` ref into the actual secret) | ✅ **Real, working** | The `resolvers/` package ships **9 backends**: `age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool` (GNOME keyring), `keychain` (macOS), `vault` (HashiCorp). `synapse resolve <slug>` fetches the secret on demand; `creds` shows only the reference; plaintext is never persisted. Adding another = one module + one stanza. |
 | **File extractors** (turn documents into text) | ✅ **Real, working** | PDF, email (+attachments), JPEG/PNG (EXIF), text/CSV, **and now `.docx` / `.xlsx` / `.html`** (pure stdlib). Each degrades to empty text on error, never crashes. |
@@ -207,7 +214,21 @@ triggers a fresh summary.
 | `aliases.yaml` | promotion only | Surface form → slug (`"boa"` → `bofa-checking`). |
 | `field_mappings.yaml` | promotion only | Learned field-extraction regexes (amounts, dates, IDs). **Promote-only writer** — each one is human-approved and passes a deterministic validation gate. |
 | `resolvers.yaml` | human | Credential backend config (scheme → backend module). 9 backends implemented (see §2). |
+| `tokens.yaml` (optional) | human | Per-agent API tokens → `{actor, scopes}` for the HTTP service (`read`/`write`/`resolve`). Parallel to `resolvers.yaml`; absent = single `VAULT_TOKEN` / open. |
 | `_entity-template.md` | human | The three-region page template, fully commented. |
+
+**Derived + audit artifacts** (never hand-edit — regenerated or append-only):
+
+| Path | Writer | Notes |
+|------|--------|-------|
+| `_index.json` / `_index.md` | `build_index.reindex()` | Structured search index (rebuilt after every mutating pass). git-ignored. |
+| `_index.db` | `build_index` / `search` | SQLite **FTS5** full-text sidecar. Derived, rebuildable, git-ignored. |
+| `_vectors.db` | `semantic build` | Embedding vector index for semantic search. Derived, git-ignored. |
+| `discovery/proposals.jsonl` | compiler (append) | LLM vocabulary proposals awaiting promotion. |
+| `discovery/promoted.jsonl` | promote/review (append) | Every promotion/approval decision (audit). |
+| `discovery/_runs.jsonl` | cadences + API jobs (append) | Pipeline run history (cadence/op, rc, duration). |
+| `discovery/_access.jsonl` | `api/audit.py` (append) | Per-agent write/resolve audit (actor, method, path, status — never secrets). |
+| `discovery/_submissions.jsonl` | MCP `submit_source` (append) | Agent source contributions (actor, path, sha256). |
 
 **The anti-rot rule:** the LLM *proposes* vocabulary additions; only the
 deterministic `promote.py` *commits* them. A non-deterministic component never
@@ -250,19 +271,25 @@ built-in extractors and **secret-scanned** at ingest.
 
 Every module below lives under `agent_vault/` and is invoked as
 **`python -m agent_vault.<module> [vault-dir] [args...]`** (default vault dir:
-current directory) — pass `-h`/`--help` for its own usage. Only `synapse`
-(retrieval + `compact`) and `serve` (the HTTP service) have installed
-console-script entry points: `agent-vault` and `agent-vault-serve`
-respectively (`pyproject.toml`'s `[project.scripts]`). Everything else in
-this table has **no** console entry — the `python -m agent_vault.<module>`
-form is the only way to run it directly.
+current directory) — pass `-h`/`--help` for its own usage. Five modules have
+installed console-script entry points (`pyproject.toml`'s `[project.scripts]`):
+`agent-vault` (→ `synapse`), `agent-vault-serve` (→ `serve`), `agent-vault-mcp`
+(→ `mcp_server`, optional `[mcp]` extra), `agent-vault-backup` (→ `backup`), and
+`agent-vault-migrate` (→ `migrate`). Everything else has **no** console entry —
+the `python -m agent_vault.<module>` form is the only way to run it directly.
 
 | Module | Invocation | What it does | LLM? | Writes |
 |--------|------------|---------------|:----:|--------|
 | `ingest` | `python -m agent_vault.ingest .` | `raw/` → entity stubs; hashes for idempotency; classifies; auto-stubs missing link targets | no | `entities/`, `raw/_manifest.jsonl`, `_index.json` |
 | `compiler` | `python -m agent_vault.compiler .` | Writes prose for stubs / drifted pages; logs proposals | **yes** | prose body, `status`+`compiled_from_hash`, `discovery/proposals.jsonl` |
 | `promote` | `python -m agent_vault.promote .` | Drains proposals → graduates vocabulary by threshold | no | `registry/schema.yaml`, `registry/aliases.yaml`, `registry/patterns.yaml` (billers/shapes), `registry/field_mappings.yaml`, `discovery/promoted.jsonl` |
-| `build_index` | `python -m agent_vault.build_index .` | Walks entities → `_index.json` (+ human `_index.md`) | no | `_index.json`, `_index.md` |
+| `build_index` | `python -m agent_vault.build_index .` | Walks entities → `_index.json` (+ human `_index.md`) + the FTS5 sidecar (`_index.db`). Exposes `reindex(vault)` that every mutating pass calls (O7 freshness) | no | `_index.json`, `_index.md`, `_index.db` |
+| `search` | (library; drives `agent-vault find` + `GET /api/search`) | Ranked full-text search over prose+metadata (FTS5 bm25; metadata fallback); `search(mode=fts\|semantic\|hybrid)` | no | nothing (builds `_index.db` via `build_index`) |
+| `embeddings` + `semantic` | `python -m agent_vault.semantic build\|query .` | Vector index (`_vectors.db`) + cosine / hybrid semantic search. Pluggable embedder (`AGENT_VAULT_EMBEDDER=ollama\|mock`) | no* | `_vectors.db` (derived; embedder may call Ollama) |
+| `rag` | `python -m agent_vault.rag "<question>" .` | Grounded, **cited** answer over the vault (retrieve → local model → verified citations). `AGENT_VAULT_RAG=ollama\|mock` | **yes** (read-only; never writes vault) | nothing |
+| `mcp_server` | `agent-vault-mcp` (console; `[mcp]` extra) | MCP server exposing 7 tools to agents (search/ask/get/list/status/submit_source/resolve_credential) | no† | via tools only: `submit_source` appends to `raw/` + `discovery/_submissions.jsonl` |
+| `backup` | `agent-vault-backup export\|restore\|list` | Vault snapshot: tar.gz of entities/registry/discovery (+`--include-raw`); safe restore (reindexes) | no | the archive; restore writes `entities/`,`registry/`,`discovery/` |
+| `migrate` | `agent-vault-migrate check\|apply .` | Schema-version drift report + migration runner (bumps `schema.yaml` version) | no | `registry/schema.yaml` version line (on `apply`) |
 | `synapse` | `agent-vault <cmd>` (console script) | Query CLI: `find`/`show`/`due`/`expiring`/`creds`/`resolve`/`list`/`compact` | no | nothing read-only (except `compact --apply`) |
 | `compact` | `agent-vault compact [--apply]` or `python -m agent_vault.compact .` | Bounds the append-only discovery logs without changing outcomes | no | rewrites `discovery/*.jsonl` (+ `.bak`) only with `--apply` |
 | `locking` | (library, not run directly) | One vault-wide advisory write lock (used by all mutating passes) | no | `registry/_vault.lock` |
@@ -274,6 +301,11 @@ form is the only way to run it directly.
 | `review` | `python -m agent_vault.review . <cmd>` | Human approve/reject: queued proposals (incl. new types) + needs-review entities | no | registry (on approve), entity `status:` lines, `discovery/promoted.jsonl` |
 | `collections_importer` | `python -m agent_vault.collections_importer . --source <path>` | Library exports → `collection` entities | no | `entities/collection/`, `raw/collections/_imports.jsonl` |
 | `serve` | `agent-vault-serve` (console script) | FastAPI HTTP service — see [`docs/API.md`](./docs/API.md) | no | nothing (reads vault on demand) |
+
+The core invariant is unchanged: **`compiler.py` is the only LLM writer of vault
+state.** `semantic`/`rag` may call a local model for embeddings/answers, but only
+on the **read** side — they rank and answer, they never author facts or
+vocabulary. Both ship a deterministic offline mock so CI never needs a model.
 
 **Cadence wrappers** (`cadences/`, plain `sh` — wire to cron/systemd/anything):
 
@@ -292,9 +324,15 @@ form is the only way to run it directly.
 `requirements.txt`; dependencies live in `pyproject.toml`.
 
 ```
-pip install -e .          # installs pyyaml, fastapi, uvicorn, sse-starlette + the agent-vault/agent-vault-serve CLIs
-pip install -e .[dev]     # + pytest, ruff, mypy — needed to run the test suite (see §5 above and CI)
+pip install -e .          # pyyaml, fastapi, uvicorn, sse-starlette + the 5 console scripts
+pip install -e ".[dev]"   # + pytest, ruff, mypy — needed to run the test suite (see §5 above and CI)
+pip install -e ".[mcp]"   # + the Model Context Protocol SDK — needed only for `agent-vault-mcp`
 ```
+
+Full-text search (`agent-vault find`, `GET /api/search`) uses Python's stdlib
+`sqlite3` **FTS5** extension when present; if your SQLite lacks FTS5, retrieval
+transparently falls back to a metadata substring scan (no error). Semantic
+search / RAG additionally need an embedder/model — see below.
 
 **Recommended** (without these, PDFs and images yield no text and pile up in
 `unknown` — `ingest` warns you on stderr when they're absent):
@@ -320,10 +358,41 @@ export OLLAMA_HOST=http://localhost:11434
 export OLLAMA_MODEL=qwen2.5:7b-instruct
 ```
 
-To run fully offline / in CI, use the deterministic mock client:
+The Ollama client's sampling/runtime and resilience knobs are **config, not
+code** (same ethos as `OLLAMA_HOST`/`OLLAMA_MODEL`) — all optional:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `OLLAMA_TEMPERATURE` | `0.2` | Sampling temperature; low for faithful, low-variance prose. |
+| `OLLAMA_NUM_CTX` | `max(8192, ⌈(total_source_chars+4000)/3.5⌉)` | Context window. The default tracks `AGENT_VAULT_TOTAL_SOURCE_CHARS`, so raising the source budget for a big-context model isn't silently truncated by Ollama at 8192. |
+| `OLLAMA_RETRIES` | `2` | Extra attempts on a **transient** connection/timeout fault (HTTP 4xx/5xx and bad JSON are never retried). The weekly cadence is the only LLM pass, so a momentary Ollama restart shouldn't drop entities until next week. |
+| `OLLAMA_RETRY_BACKOFF_S` | `1.0` | Linear backoff base between retries. |
+
+**Retrieval / RAG** (semantic search + cited answers — all optional; each has a
+deterministic offline mock so CI needs no model):
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `AGENT_VAULT_EMBEDDER` | `ollama` | Embedder for semantic search: `ollama` (real) or `mock` (deterministic, offline). |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model for `AGENT_VAULT_EMBEDDER=ollama`. |
+| `AGENT_VAULT_RAG` | `ollama` | Answerer for `GET /api/answer` / `vault_ask`: `ollama` or `mock`. |
+| `AGENT_VAULT_RAG_CONTEXT_CHARS` | `6000` | Max chars of retrieved prose fed to the RAG model. |
+
+**Auth (HTTP service)** — see [`docs/API.md`](./docs/API.md#auth-model) for the
+full model:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `VAULT_TOKEN` | `""` (open) | Legacy single admin token (all scopes). |
+| `VAULT_TOKENS` | `""` | JSON `{"<token>": {"actor","scopes":[read\|write\|resolve]}}` for per-agent tokens (or use `registry/tokens.yaml`). |
+| `AGENT_VAULT_MCP_ALLOW_RESOLVE` | unset | Set to `1` to let the MCP `vault_resolve_credential` tool return secrets (off by default). |
+
+To run fully offline / in CI, use the deterministic mock clients:
 
 ```
-export AGENT_VAULT_COMPILER=mock
+export AGENT_VAULT_COMPILER=mock   # prose compiler
+export AGENT_VAULT_EMBEDDER=mock   # semantic search
+export AGENT_VAULT_RAG=mock        # cited answers
 ```
 
 ---
@@ -428,7 +497,7 @@ about review items that have been sitting too long.
   `get_client` dispatch. What is *not* covered is a real round trip against a
   running Ollama instance — that still requires you to stand one up. If you're
   touching `agent_vault/compiler.py`'s `OllamaClient`
-  (`agent_vault/compiler.py:508`), extend the mocked-transport tests alongside
+  (`agent_vault/compiler.py:530`), extend the mocked-transport tests alongside
   your change.
 - **The pattern library covers ~104 billers** (banks, brokerages, card
   issuers, P&C + health insurers, telecoms, utilities, streaming, subscriptions,
@@ -449,24 +518,37 @@ about review items that have been sitting too long.
 - **Concurrency:** every mutating entry point (ingest / compile / promote /
   reclassify / collections-import) takes one vault-wide advisory lock
   (`locking.py`), so overlapping cadence runs serialize instead of corrupting
-  shared state. Reclassify rebuilds `_index.json` after moving files.
+  shared state (single writer host; `flock` is per-host).
+- **Index freshness (O7):** every mutating pass calls `build_index.reindex()`
+  (JSON + MD + FTS sidecar), so readers never serve a stale index after a write;
+  `GET /api/status` reports an `index` freshness block (`stale` flag) that flags
+  the direct-file-edit edge that bypassed the pipeline.
+- **Auth & audit:** the HTTP service supports per-agent tokens with
+  `read`/`write`/`resolve` scopes (`VAULT_TOKENS` / `registry/tokens.yaml`), and
+  a pure-ASGI middleware records every write/resolve to `discovery/_access.jsonl`
+  (actor + method + path + status; never bodies or secrets).
+- **Backup & migration:** `agent-vault-backup export/restore` snapshots the
+  authored state (safe restore, no traversal, reindexes); `validate.py` gates the
+  `schema.yaml` version and `agent-vault-migrate` is the upgrade runner.
 - **Resilience:** a poison file is isolated (recorded as a manifest `error`, run
   continues); oversized files are skipped (`AGENT_VAULT_MAX_RAW_MB`, default 50);
   docx/xlsx have a decompression-bomb guard. `lint`'s `ingest_errors` check
   surfaces anything skipped.
 - **Durability:** all vault writes are `tmp + fsync + os.replace` (atomic, and
   survive power loss before the rename).
-- **Observability:** each cadence appends a JSON run record to
-  `discovery/_runs.jsonl` (cadence, ts, rc, duration) — cron-debuggable.
+- **Observability:** each cadence — and each web-triggered job — appends a JSON
+  run record to `discovery/_runs.jsonl` (cadence/op, ts, rc, duration), surfaced
+  by `GET /api/runs` and the dashboard's `last_run`.
 - **Log growth:** the append-only discovery logs are bounded on demand by
   `agent-vault compact --apply` (or `python -m agent_vault.compact . --apply`),
   which dedups `proposals.jsonl`/`promoted.jsonl` **without changing any
   promotion outcome** (writes `.bak` backups first). Run it quarterly or wire
   it into a cadence.
-- **Packaging:** dependencies and the `agent-vault`/`agent-vault-serve`
-  console scripts are declared in `pyproject.toml` (no separate
-  `requirements.txt`); `pytest` runs the test suite (no custom test runner).
-  Python 3.11+ (`pyproject.toml`'s `requires-python`).
+- **Packaging:** dependencies and the five console scripts (`agent-vault`,
+  `-serve`, `-mcp`, `-backup`, `-migrate`) are declared in `pyproject.toml` (no
+  separate `requirements.txt`; MCP is the optional `[mcp]` extra). `pytest` runs
+  the backend suite; `web/` has `npm run lint` (ESLint) + `vitest` + `build`.
+  CI (`.github/workflows/ci.yml`) gates both. Python 3.11+.
 
 ---
 
