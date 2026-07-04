@@ -37,8 +37,10 @@ def test_from_env_reads_all_vars(monkeypatch):
 
 
 def test_from_env_bad_port_raises(monkeypatch):
+    # B1: a bad port now fails fast with an actionable SystemExit at startup
+    # (was a bare ValueError), so the message points at AGENT_VAULT_PORT.
     monkeypatch.setenv("AGENT_VAULT_PORT", "not-a-port")
-    with pytest.raises(ValueError):
+    with pytest.raises(SystemExit):
         Settings.from_env()
 
 
