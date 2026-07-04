@@ -186,11 +186,10 @@ Vitest (`web/vite.config.ts`: `environment: "jsdom"`, `setupFiles:
 colocated per-component (`*.test.tsx` / `*.test.ts` next to the file they
 cover) across `wm/`, `screens/`, `store/`, `api/`, `ui/`. Run `npm test`
 for a one-shot run (what CI does via `.github/workflows/ci.yml`'s
-`frontend` job: `npm ci` → `npm test -- --run` → `npm run build`).
+`frontend` job: `npm ci` → `npm run lint` → `npm test -- --run` → `npm run build`).
 
 ## Known gaps (don't be surprised by these)
 
-- No ESLint config, no lint script.
 - No router library — navigation is in-memory state via `store/windows.ts` +
   `ScreenRouter`'s `switch`; there's no deep-linking (a page refresh always
   lands back on the `Vault` hub screen).

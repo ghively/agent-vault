@@ -43,6 +43,13 @@ API spawns (`POST /api/jobs/run`). These four (and ONLY these four) can be
 changed at runtime via `POST /api/config/apply`, which validates and writes
 them into `os.environ` so subsequent jobs inherit them.
 
+Retrieval/answer env vars affect the in-process read endpoints directly (not
+just spawned jobs): `GET /api/search?mode=semantic` uses `AGENT_VAULT_EMBEDDER`
+(`ollama`|`mock`) + `OLLAMA_EMBED_MODEL`; `GET /api/answer` uses
+`AGENT_VAULT_RAG` (`ollama`|`mock`) + `AGENT_VAULT_RAG_CONTEXT_CHARS`. Each has a
+deterministic offline `mock` so the service runs with no model. Auth tokens come
+from `VAULT_TOKEN` / `VAULT_TOKENS` / `registry/tokens.yaml` (see Auth model).
+
 There is no CORS middleware and no other service-level configuration.
 
 ## Auth model
@@ -93,7 +100,7 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 |---|---|---|---|
 | GET | `/api/health` | no | Liveness check → `{"ok": true}` (open so LB/orchestrator probes work; liveness info only) |
 | GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters (metadata substring only — for ranked prose-aware search use `/api/search`) |
-| GET | `/api/search` | yes* | Ranked full-text search over prose **and** metadata: `?q=<query>&limit=<n>` → `{"query", "hits": [{slug,title,type,subtype,status,path,score,snippet}], "fts": <bool>}`. Prose-aware bm25 via the FTS5 sidecar; `fts:false` means the metadata fallback is live. |
+| GET | `/api/search` | yes* | Ranked retrieval over prose **and** metadata: `?q=<query>&limit=<n>&mode=<fts\|semantic\|hybrid>` (default `fts`) → `{"query", "mode", "hits": [{slug,title,type,subtype,status,path,score,snippet}], "fts": <bool>, "semantic": <bool>}`. `fts`=prose-aware bm25 (metadata fallback if `fts:false`); `semantic`=embedding cosine (needs `_vectors.db`, built via `python -m agent_vault.semantic build`); `hybrid`=rank-fusion of both. The `fts`/`semantic` flags report which ranked paths are live. |
 | GET | `/api/entities/{slug}` | yes* | Full entity record: prose, facts, sources, resolved links |
 | PATCH | `/api/entities/{slug}` | yes* | Edit only `title`/`tags`/`notes` frontmatter fields (line-targeted; validated + rolled back on failure) → same shape as `GET /api/entities/{slug}` |
 | GET | `/api/schema` | yes* | Vault taxonomy for UI pickers: `{"types": [{"type", "subtypes": [...]}], "tags": [...]}` (sorted, includes `unknown`) |

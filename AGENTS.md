@@ -18,7 +18,7 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   `validate`, `lint`, `review`, `reclassify_apply`, `collections_importer`) —
   those have no console-script entry point.
 - **Service**: `agent-vault-serve` console script — FastAPI HTTP service with
-  32 routes (entities incl. `GET /api/search` + `GET /api/answer`, credentials, review, jobs, run
+  30 routes (entities incl. `GET /api/search` + `GET /api/answer`, credentials, review, jobs, run
   history, status/ask, config, settings), not just credential resolution. Full
   reference: [`docs/API.md`](docs/API.md).
 - **UI**: React web interface in `web/` — a window-manager desktop with 8
@@ -65,11 +65,13 @@ invariant, not a technical guarantee.
 | `registry/patterns.yaml` | human + promotion-append | allowed (classifier vocabulary — billers + shapes) |
 | `registry/field_mappings.yaml` | `promote.py` ONLY | **BLOCKED** - learned field mappings; grow via promote + human review approval path |
 | `registry/resolvers.yaml` | human only | allowed (credential backend config) |
+| `registry/tokens.yaml` | human only | allowed (OPTIONAL per-agent API tokens → `{actor, scopes}`; parallel to resolvers.yaml) |
 | `registry/_entity-template.md` | human | allowed (structural template) |
-| `raw/**` | append-only (sources) | adding new files OK; **never modify/delete** existing - WARNED |
-| `discovery/*.jsonl` | append-only (scripts) | **never hand-edit** (corrupts audit/proposals) - WARNED |
+| `raw/**` | append-only (sources) | adding new files OK (incl. MCP `submit_source`); **never modify/delete** existing - WARNED |
+| `discovery/*.jsonl` | append-only (scripts) | **never hand-edit** — proposals/promoted/_runs/_access (API audit)/_submissions (MCP) - WARNED |
 | `entities/**/*.md` | ingest (frontmatter/LINKS) + compiler (prose) | edit only via the pipeline / recipes, honoring region ownership |
-| `_index.json` / `_index.md` | `build_index.py` only | regenerated; never hand-edit |
+| `_index.json` / `_index.md` | `build_index.reindex()` only | DERIVED; regenerated after every mutating pass; git-ignored; never hand-edit |
+| `_index.db` (FTS5) / `_vectors.db` (embeddings) | `build_index` / `semantic build` | DERIVED search sidecars; rebuildable; git-ignored; never hand-edit |
 
 ## Pipeline + exact CLI signatures
 
@@ -173,7 +175,7 @@ unexercised in CI.
 The vault is a **standalone HTTP service** (`agent-vault-serve`). Consumers
 (like SynapseNAS) call it over the network — no file-system or subprocess
 coupling, the boundary is HTTP + JSON. It exposes far more than credential
-resolution: 32 routes across entities, credentials, review, jobs (including
+resolution: 30 routes across entities, credentials, review, jobs (including
 SSE log streaming for running pipeline stages from a browser), run history,
 status/ask, config, and settings. **Full reference: [`docs/API.md`](docs/API.md).**
 The two simplest:

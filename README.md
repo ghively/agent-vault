@@ -16,8 +16,8 @@ for the web frontend's architecture, see [`web/README.md`](./web/README.md).
 - **Service**: Run `agent-vault-serve` to start the FastAPI HTTP service (credential resolution)
 - **UI**: Run `cd web && npm install && npm run dev` for the React frontend
 - **MCP**: Install `pip install -e ".[mcp]"` and run `agent-vault-mcp` to expose
-  the vault to AI agents over the Model Context Protocol (search / get / list /
-  status / submit-source / resolve-credential tools)
+  the vault to AI agents over the Model Context Protocol (7 tools: search / ask /
+  get / list / status / submit-source / resolve-credential)
 
 The vault is now a **standalone product** (severed from SynapseNAS). It can be used
 independently, consumed by other services over HTTP, or plugged into a fleet of
@@ -78,7 +78,7 @@ agent-vault-serve          # starts the FastAPI service
 #   VAULT_TOKEN (optional bearer token for auth)
 ```
 
-The service exposes 32 routes across entities, credentials, review, jobs,
+The service exposes 30 routes across entities, credentials, review, jobs,
 run history, status/ask, config, and settings — see [`docs/API.md`](./docs/API.md)
 for the full reference, including the SSE job-streaming mechanism the web UI uses to run
 pipeline stages from the browser. `/api/health` (liveness) and
@@ -104,6 +104,15 @@ the only remaining stubs are two cosmetic QuickPanel glyphs (power/restart)
 carried over from the shell it was ported from.
 
 ## Current state: Stages 0–6 complete (all follow-ups closed)
+
+> The stage-by-stage log below is the historical build record. **Beyond the six
+> stages**, the vault has since grown a full retrieval stack (ranked full-text
+> search, semantic/embedding search, and cited RAG answers), an **MCP** server
+> so agents read/write it as a shared knowledgebase, **per-agent auth scopes +
+> an access audit**, **backup/restore** and **schema-version** tooling, and
+> automatic index-freshness. See [`docs/AUDIT.md`](docs/AUDIT.md) for the full
+> map of what shipped and what's deliberately deferred, and the
+> [Production status](#production-status) section below for the release summary.
 
 **Built (Stage 0):**
 - Full directory tree (`registry/`, `raw/`, `entities/<12 types>/`, `discovery/`)
@@ -319,14 +328,16 @@ The vault is a **three-tier standalone product**:
 
 1. **CLI tier** (`agent_vault/`) — Python modules for ingestion, classification,
    compilation, and retrieval. All deterministic except the prose-generation step.
-   Only `synapse.py` (retrieval) and `serve.py` have console-script entry points
-   (`agent-vault`, `agent-vault-serve`); every other pipeline module is run via
-   `python -m agent_vault.<module>` — see [`docs/API.md`](./docs/API.md) and
-   the script reference in [`DOCS.md`](./DOCS.md#5-script-reference) for exact
-   invocations.
-2. **Service tier** (`agent_vault/api/`) — FastAPI HTTP service exposing 27
-   routes (entities, credentials, review queue, pipeline jobs, run history,
-   status/ask, config, settings) — see [`docs/API.md`](./docs/API.md) for the full reference.
+   Five modules have console-script entry points (`agent-vault` → `synapse`,
+   `agent-vault-serve` → `serve`, `agent-vault-mcp` → `mcp_server`,
+   `agent-vault-backup` → `backup`, `agent-vault-migrate` → `migrate`); every
+   other pipeline module is run via `python -m agent_vault.<module>` — see
+   [`docs/API.md`](./docs/API.md) and the script reference in
+   [`DOCS.md`](./DOCS.md#5-script-reference) for exact invocations.
+2. **Service tier** (`agent_vault/api/`) — FastAPI HTTP service exposing 30
+   routes (entities incl. search + answer, credentials, review queue, pipeline
+   jobs, run history, status/ask, config, settings) — see
+   [`docs/API.md`](./docs/API.md) for the full reference.
 3. **UI tier** (`web/`) — React/TypeScript window-manager-style desktop — see
    [`web/README.md`](./web/README.md) for the architecture.
 
@@ -335,10 +346,14 @@ agent-vault/                    # Repo root == the vault root (registry/, raw/, 
 ├── agent_vault/                # Python package (CLI + service)
 │   ├── api/                    # FastAPI service — routers are flat files, no routes/ subfolder
 │   │   ├── app.py              # Service factory (mounts routers + serves web/dist)
-│   │   ├── config.py           # Settings (env vars: AGENT_VAULT_HOST/PORT/PATH, VAULT_TOKEN)
-│   │   ├── auth.py             # Bearer-token dependency
-│   │   ├── reads.py, creds.py, review.py, jobs.py, history.py, settings.py
-│   ├── *.py                    # Pipeline modules (ingest, compiler, promote, ...) — no console entry, use `python -m agent_vault.<name>`
+│   │   ├── config.py           # Settings (env vars: AGENT_VAULT_HOST/PORT/PATH, VAULT_TOKEN, VAULT_TOKENS)
+│   │   ├── auth.py             # per-agent identity + scopes (read/write/resolve); audit.py logs writes/resolves
+│   │   ├── reads.py (+ /api/search), status.py (+ /api/answer), edit.py, creds.py,
+│   │   │   review.py, jobs.py (+ DELETE), history.py, settings.py, audit.py
+│   ├── ingest/compiler/promote/... # Pipeline modules — no console entry, use `python -m agent_vault.<name>`
+│   ├── search.py, semantic.py, embeddings.py, rag.py  # retrieval stack (FTS5 → vector → cited RAG)
+│   ├── mcp_server.py, mcp_tools.py # MCP server (console `agent-vault-mcp`, [mcp] extra)
+│   ├── backup.py, migrate.py       # console `agent-vault-backup` / `agent-vault-migrate`
 │   └── resolvers/               # Credential backends (9 modules)
 ├── web/                        # React UI (Vite + TypeScript)
 │   ├── src/                    # Components
@@ -362,10 +377,12 @@ agent-vault creds <slug>              # credential REFERENCE (never the secret)
 agent-vault list [type]               # everything, or one type
 ```
 
-`agent-vault` is the installed console script (`agent_vault.synapse:main`) —
-it only covers retrieval/maintenance (`find`/`show`/`due`/`expiring`/`creds`/
-`resolve`/`list`/`compact`). `build_index` and every pipeline stage below have
-no console entry point and are invoked as `python -m agent_vault.<module>`.
+`agent-vault` is the installed console script (`agent_vault.synapse:main`) — it
+covers retrieval/maintenance (`find`/`show`/`due`/`expiring`/`creds`/`resolve`/
+`list`/`compact`). Four more console scripts exist (`agent-vault-serve`, `-mcp`,
+`-backup`, `-migrate`); the remaining pipeline stages (`build_index`, `ingest`,
+`compiler`, …) have no console entry and are run as `python -m
+agent_vault.<module>`.
 
 ## Layout
 
@@ -377,10 +394,14 @@ agent-vault/
 │   ├── patterns.yaml        ← classifier vocabulary (billers + shapes). HUMAN + PROMOTION writes.
 │   ├── field_mappings.yaml  ← learned field-extraction regexes. PROMOTION STEP writes only.
 │   ├── resolvers.yaml       ← credential scheme → backend. HUMAN writes.
-│   └── _entity-template.md  ← page template (3 ownership-fenced regions)
+│   ├── _entity-template.md  ← page template (3 ownership-fenced regions)
+│   └── tokens.yaml          ← OPTIONAL per-agent API tokens → {actor, scopes}. HUMAN writes.
 ├── raw/                     ← immutable source documents. APPEND-ONLY. (system boundary)
 ├── entities/<type>/         ← the wiki proper, one file per entity
-└── discovery/               ← LLM proposals.jsonl (Stage 4). APPEND-ONLY.
+├── discovery/               ← proposals.jsonl + promoted.jsonl + _runs.jsonl +
+│                              _access.jsonl (API audit) + _submissions.jsonl. APPEND-ONLY.
+├── _index.json / _index.md  ← DERIVED search index (build_index). git-ignored; never hand-edit.
+└── _index.db / _vectors.db  ← DERIVED FTS5 + vector sidecars (build_index / semantic). git-ignored.
 ```
 
 (`validate.py` isn't a vault-dir file — it's `agent_vault/validate.py` in the
@@ -424,20 +445,38 @@ python -m agent_vault.collections_importer . \        # bookkeeping import for c
     --source raw/collections/
 python -m agent_vault.validate .                      # exit 0 means every entity passes the schema
 python -m agent_vault.lint .                          # operational anomaly report (read-only)
-agent-vault find <text>                               # search the vault (console script)
+python -m agent_vault.build_index .                  # rebuild _index.json/.md + FTS sidecar (auto after any write)
+python -m agent_vault.semantic build .               # (re)build the vector index for semantic search (needs an embedder)
+agent-vault find <text>                               # ranked, prose-aware search (console script)
+python -m agent_vault.rag "<question>" .             # grounded, cited answer over the vault
+```
+
+Retrieval, backup, and schema tooling (all deterministic, no vault writes except
+where noted):
+
+```
+agent-vault-backup export . --out vault.tar.gz       # snapshot entities/registry/discovery (+--include-raw)
+agent-vault-backup restore vault.tar.gz DEST         # safe restore (no traversal; refuses non-empty; reindexes)
+agent-vault-migrate check .                          # report schema-version drift
+agent-vault-mcp                                       # MCP server (optional [mcp] extra): tools for agents
 ```
 
 Each script never shares state in process with another — the contract is
 the files on disk. Run them in any order, from any harness; the data layer
 is identical.
 
-## What's left
+## Production status
 
-Nothing structural. All six stages and all three follow-ups (auto-stubbing,
-reclassify apply, the human review loop) are shipped and tested. Future
-work, if it shows up, is *content* (more biller patterns, more import
-formats, more lint checks) rather than architecture — the file contract is
-what stays put.
+All six pipeline stages, the three follow-ups, and the standalone-product
+tiers (CLI, FastAPI service, React UI) are shipped and tested; the retrieval
+stack (full-text → semantic → cited RAG), the **MCP** agent interface, per-agent
+**auth scopes + access audit**, **backup/restore**, **schema versioning**, and
+index-freshness are in place. CI (`ruff` + `mypy` + `pytest` for the backend;
+`eslint` + `vitest` + `build` for `web/`) gates every change; the backend suite
+is 420 tests, the web suite 121. Remaining work is *content* (more biller
+patterns, import formats, lint checks) and a few explicitly-deferred niceties
+tracked in [`docs/AUDIT.md`](docs/AUDIT.md) §4 — not architecture. The file
+contract is what stays put.
 
 ## Pattern library
 
