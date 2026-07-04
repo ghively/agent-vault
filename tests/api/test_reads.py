@@ -421,3 +421,47 @@ def test_entities_response_shape_matches_synapsenas():
     data = response.json()
     assert set(data.keys()) == {"items"}
     assert set(data["items"][0].keys()) == {"slug", "title", "ref", "backend"}
+
+
+def test_search_endpoint_empty_query():
+    """GET /api/search with no query returns an empty hit list, not an error."""
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search").json()
+    assert data["query"] == ""
+    assert data["hits"] == []
+    assert "fts" in data
+
+
+def test_search_endpoint_finds_prose_only_term():
+    """GET /api/search finds a term that appears only in the prose body, which
+    the metadata-only GET /api/entities filter cannot (O4.1 headline win)."""
+    from agent_vault import search
+
+    vault = create_test_vault()
+    # Build the FTS sidecar over the on-disk entity files.
+    if search.fts5_available():
+        search.build_search_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+
+    # "household" appears in bofa-checking's PROSE, never its metadata.
+    data = client.get("/api/search", params={"q": "household"}).json()
+    slugs = [h["slug"] for h in data["hits"]]
+    if search.fts5_available():
+        assert "bofa-checking" in slugs
+        assert set(data["hits"][0].keys()) >= {
+            "slug", "title", "type", "subtype", "status", "path", "score", "snippet",
+        }
+    # The metadata filter cannot match a prose-only term:
+    meta = client.get("/api/entities", params={"q": "household"}).json()
+    assert meta["rows"] == []
+
+
+def test_search_endpoint_respects_limit():
+    vault = create_test_vault()
+    from agent_vault import search
+    if search.fts5_available():
+        search.build_search_index(str(vault))
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/search", params={"q": "account", "limit": 1}).json()
+    assert len(data["hits"]) <= 1

@@ -118,6 +118,22 @@ def main():
 
     print(f"indexed {len(entities)} entities -> {out_json}")
 
+    # Refresh the full-text search sidecar (_index.db) from the same entities.
+    # Best-effort: a search-index failure must never fail the structural index
+    # build that retrieval's correctness depends on. FTS is an accelerator; the
+    # substring fallback in search.py covers its absence.
+    try:
+        from agent_vault import search
+        n = search.build_search_index(vault)
+        if n:
+            print(f"search index: {n} entities -> {os.path.join(vault, search.DB_NAME)}")
+        elif not search.fts5_available():
+            print("search index: FTS5 unavailable; retrieval uses substring fallback",
+                  file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 - never let search indexing abort build
+        print(f"warn: search index build skipped ({type(e).__name__}: {e})",
+              file=sys.stderr)
+
 
 if __name__ == "__main__":
     sys.exit(main())
