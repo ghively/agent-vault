@@ -23,6 +23,16 @@ from agent_vault.api import status as status_api
 from agent_vault.api import vault_config
 
 
+def _package_version() -> str:
+    """Single source of truth for the API version: the installed package
+    metadata (pyproject `version`), with a dev fallback so it never crashes."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("agent-vault")
+    except PackageNotFoundError:
+        return "0.0.0+dev"
+
+
 def create_app(settings: Settings) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -38,7 +48,7 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(
         title="Agent Vault API",
         description="HTTP API for Agent Vault document wiki",
-        version="0.1.0",
+        version=_package_version(),
     )
     app.state.settings = settings
 
