@@ -47,14 +47,30 @@ There is no CORS middleware and no other service-level configuration.
 
 ## Auth model
 
-`agent_vault/api/auth.py` builds a FastAPI dependency from `VAULT_TOKEN`:
+`agent_vault/api/auth.py` resolves each caller to an **Identity** (`actor` +
+`scopes`) and gates by scope (O5/O6). It is backward-compatible with the old
+single-token model:
 
-- If `VAULT_TOKEN` is unset/empty, the dependency is a no-op — every `/api/*`
-  route is open.
-- If set, every `/api/*` route **except `/api/health`** requires
-  `Authorization: Bearer <token>`; a missing or mismatched token gets `401`.
-  Token comparison is constant-time (`secrets.compare_digest`), so response
-  timing can't leak token prefixes.
+- If **no** token is configured anywhere, auth is a no-op — every `/api/*` route
+  is open (actor `anonymous`, all scopes).
+- `VAULT_TOKEN=<t>` (legacy) — one token, **all scopes**, actor `vault-token`.
+  Every `/api/*` route except `/api/health` then requires `Authorization: Bearer
+  <t>`; missing/invalid → `401`. Comparison is constant-time
+  (`secrets.compare_digest`), so timing can't leak token prefixes.
+- **Per-agent tokens** — for a shared multi-agent deployment, map tokens to
+  actors + scopes via either source (merged; the legacy `VAULT_TOKEN` stays an
+  admin token):
+  - `VAULT_TOKENS` env — JSON `{"<token>": {"actor": "...", "scopes": ["read","write","resolve"]}}`
+  - `registry/tokens.yaml` — `tokens: {<token>: {actor: ..., scopes: [...]}}` (human-authored)
+- **Scopes** gate by request shape, so no per-endpoint wiring: `read` = GET/HEAD;
+  `write` = POST/PUT/PATCH/DELETE; `resolve` = `POST /api/creds/{slug}/resolve`
+  (returns plaintext). `admin` implies all. A valid token lacking the required
+  scope gets **`403`** (distinct from `401` for a missing/unknown token).
+- **Access audit**: every mutating or resolve call is appended to
+  `discovery/_access.jsonl` as `{ts, actor, method, path, status, scope, action,
+  target}` — never bodies or secrets (a resolve line carries only the slug +
+  status). Reads are not audited. The recorder is a pure-ASGI middleware, so it
+  doesn't buffer the SSE job stream.
 - `/api/health` is deliberately **unauthenticated**: LB/orchestrator liveness
   probes can't send bearer tokens. It returns only `{"ok": true}` — no vault
   data.

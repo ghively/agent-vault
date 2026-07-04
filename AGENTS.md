@@ -177,8 +177,14 @@ The two simplest:
 
 - **Health**: `http://127.0.0.1:7778/api/health`
 - **Credential resolve**: `http://127.0.0.1:7778/api/creds/{slug}/resolve`
-- **Auth**: Optional `VAULT_TOKEN` bearer token, scoped to `/api/*` only —
-  the SPA shell and FastAPI's `/docs`/`/redoc`/`/openapi.json` are never gated.
+- **Auth + scopes (O5/O6)**: `VAULT_TOKEN` (legacy, all-scopes admin) OR a
+  per-agent token registry (`VAULT_TOKENS` env JSON / `registry/tokens.yaml`)
+  mapping tokens → `{actor, scopes}`. Scopes `read`/`write`/`resolve` gate by
+  request shape (401 unknown token, 403 missing scope). Gating is `/api/*` only;
+  the SPA shell and `/docs`/`/redoc`/`/openapi.json` are never gated. Every
+  write/resolve is attributed in `discovery/_access.jsonl` (actor + method +
+  path + status; never bodies/secrets). `registry/tokens.yaml` is HUMAN-authored
+  (like `resolvers.yaml`).
 
 ## Gotchas
 

@@ -327,9 +327,9 @@ content" the README already anticipates.
 | Full-text search of page contents | ✅ (FTS5 bm25) | ~~O4·1~~ ✅ |
 | Semantic / NL retrieval | ✅ (embeddings + hybrid) | ~~O4·2~~ ✅ |
 | Grounded, **cited** Q&A over the KB | ✅ (`/api/answer`, `vault_ask`) | ~~O4·3~~ ✅ |
-| Defined agent write/contribute path | ⚠️ (raw drop / PATCH) | O5 |
-| Per-write **attribution** (which agent) | ❌ (single token) | O5·O6 |
-| Per-agent identity / scoping / revoke | ❌ | O6 |
+| Defined agent write/contribute path | ✅ (`submit_source` + audit) | ~~O5~~ ✅ |
+| Per-write **attribution** (which agent) | ✅ (`_access.jsonl`) | ~~O5·O6~~ ✅ |
+| Per-agent identity / scoping / revoke | ✅ (token registry + scopes) | ~~O6~~ ✅ |
 | Read-freshness under concurrent writes | ⚠️ (manual reindex) | O7 |
 | Concurrency serialization (writers) | ✅ (single-host `flock`) | O7 (multi-host) |
 | Deterministic, auditable, no-hallucination facts | ✅ | _protect_ |
@@ -354,8 +354,15 @@ then the read/write interface agents actually need, then operational maturity.
    extra: `vault_search`/`get`/`list`/`status`/`submit_source`/`resolve_credential`;
    pure tested logic in `mcp_tools.py`, thin FastMCP wiring in `mcp_server.py`;
    append-only `submit_source` with actor attribution; opt-in secret resolution).
-5. **O5 + O6** (agent write path with attribution + per-agent identity/scoping) —
-   makes multi-writer contribution defined, attributable, and revocable.
+5. ~~**O5 + O6** (agent write path with attribution + per-agent identity/scoping)~~
+   — ✅ **done**. O6: `auth.py` resolves each caller to an `Identity(actor,
+   scopes)` from `VAULT_TOKEN` (legacy admin), `VAULT_TOKENS` env, or
+   `registry/tokens.yaml`; scopes (`read`/`write`/`resolve`) gate by request
+   shape (403 on missing scope, 401 on bad token), so a read-only agent can't
+   write and only `resolve`-scoped tokens fetch secrets. O5: a pure-ASGI
+   `AuditMiddleware` appends every write/resolve to `discovery/_access.jsonl`
+   with the actor (never bodies/secrets) — closing the B5 "resolve unaudited"
+   gap; MCP `submit_source` already stamps `_submissions.jsonl`.
 6. **O7** (index freshness / multi-writer consistency) — no stale reads after a
    concurrent write; document/extend the locking boundary.
 7. **O4·2 → O4·3** (semantic retrieval → cited RAG answers) — the biggest

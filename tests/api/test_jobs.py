@@ -16,6 +16,20 @@ from agent_vault.api import jobs as jobs_module
 from agent_vault.api.jobs import JobRegistry
 
 
+@pytest.fixture(autouse=True)
+def _offline_compiler(monkeypatch):
+    """Force the offline mock compiler for every jobs test.
+
+    Several tests spawn a real `compile` subprocess via POST /api/jobs/run.
+    Without this, that child defaults to the Ollama client and tries to reach
+    localhost:11434; in a sandbox where that connect HANGS (rather than
+    refusing), the child blocks up to the 120s timeout and pytest-timeout kills
+    the test — the long-documented test_jobs environmental flake. Ollama must
+    never be a test dependency, so pin the deterministic offline compiler.
+    """
+    monkeypatch.setenv("AGENT_VAULT_COMPILER", "mock")
+
+
 def create_test_vault() -> Path:
     """Create a minimal test vault with sample entities for testing jobs."""
     vault_dir = tempfile.mkdtemp()
@@ -373,8 +387,20 @@ def test_job_stream_not_found():
     assert response.status_code == 404
 
 
-def test_job_run_all_allowed_ops():
-    """Test that all operations in allowlist can be started."""
+def test_job_run_all_allowed_ops(monkeypatch):
+    """Test that all operations in allowlist can be started.
+
+    This asserts the endpoint ACCEPTS each op and returns a job_id — it does not
+    need background runtime at all. Stub run_job to an instant no-op so the test
+    spawns no subprocess and can't hang on any op's runtime, network, or teardown
+    (it previously tripped the 120s timeout when the compile child tried to reach
+    Ollama in a sandbox where that connect hangs).
+    """
+    async def _noop(job, vault_path):
+        job.status = "completed"
+        job.returncode = 0
+
+    monkeypatch.setattr(jobs_module, "run_job", _noop)
     vault = create_test_vault()
     settings = Settings(vault_path=str(vault), token="")
     app = create_app(settings)
