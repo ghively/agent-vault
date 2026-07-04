@@ -350,8 +350,10 @@ then the read/write interface agents actually need, then operational maturity.
 3. ~~**O4·1** (full-text search over prose)~~ — ✅ **done** (`agent_vault/search.py`:
    FTS5 sidecar, bm25 ranking, prose-aware, metadata fallback; `GET /api/search`;
    ranked `synapse find`). Unblocks O4·2/O4·3.
-4. **O1** (MCP server) — the native surface for a fleet of agents to read and
-   write; wraps the existing service, no new invariant.
+4. ~~**O1** (MCP server)~~ — ✅ **done** (`agent-vault-mcp`, optional `[mcp]`
+   extra: `vault_search`/`get`/`list`/`status`/`submit_source`/`resolve_credential`;
+   pure tested logic in `mcp_tools.py`, thin FastMCP wiring in `mcp_server.py`;
+   append-only `submit_source` with actor attribution; opt-in secret resolution).
 5. **O5 + O6** (agent write path with attribution + per-agent identity/scoping) —
    makes multi-writer contribution defined, attributable, and revocable.
 6. **O7** (index freshness / multi-writer consistency) — no stale reads after a

@@ -76,7 +76,8 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/health` | no | Liveness check → `{"ok": true}` (open so LB/orchestrator probes work; liveness info only) |
-| GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters |
+| GET | `/api/entities` | yes* | List entity summaries; `?q=<search>&type=<type>` filters (metadata substring only — for ranked prose-aware search use `/api/search`) |
+| GET | `/api/search` | yes* | Ranked full-text search over prose **and** metadata: `?q=<query>&limit=<n>` → `{"query", "hits": [{slug,title,type,subtype,status,path,score,snippet}], "fts": <bool>}`. Prose-aware bm25 via the FTS5 sidecar; `fts:false` means the metadata fallback is live. |
 | GET | `/api/entities/{slug}` | yes* | Full entity record: prose, facts, sources, resolved links |
 | PATCH | `/api/entities/{slug}` | yes* | Edit only `title`/`tags`/`notes` frontmatter fields (line-targeted; validated + rolled back on failure) → same shape as `GET /api/entities/{slug}` |
 | GET | `/api/schema` | yes* | Vault taxonomy for UI pickers: `{"types": [{"type", "subtypes": [...]}], "tags": [...]}` (sorted, includes `unknown`) |

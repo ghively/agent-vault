@@ -18,11 +18,18 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   `validate`, `lint`, `review`, `reclassify_apply`, `collections_importer`) —
   those have no console-script entry point.
 - **Service**: `agent-vault-serve` console script — FastAPI HTTP service with
-  27 routes (entities, credentials, review, jobs, run history, status/ask,
-  config, settings), not just credential resolution. Full reference:
-  [`docs/API.md`](docs/API.md).
+  28 routes (entities incl. `GET /api/search`, credentials, review, jobs, run
+  history, status/ask, config, settings), not just credential resolution. Full
+  reference: [`docs/API.md`](docs/API.md).
 - **UI**: React web interface in `web/` — a window-manager desktop with 8
   apps. Full reference: [`web/README.md`](web/README.md).
+- **MCP**: `agent-vault-mcp` console script (optional `[mcp]` extra) — a Model
+  Context Protocol server exposing the vault to agents as tools (`vault_search`,
+  `vault_get`, `vault_list`, `vault_status`, `vault_submit_source`,
+  `vault_resolve_credential`). Thin FastMCP wiring (`mcp_server.py`) over pure,
+  tested tool logic (`mcp_tools.py`); reads are lock-free, the only write
+  (`submit_source`) is append-only into `raw/` with actor attribution, and
+  secret resolution is opt-in (`AGENT_VAULT_MCP_ALLOW_RESOLVE=1`).
 
 Formerly embedded in SynapseNAS; now a standalone product consumed over HTTP.
 

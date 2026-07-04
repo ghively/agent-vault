@@ -15,9 +15,22 @@ for the web frontend's architecture, see [`web/README.md`](./web/README.md).
 - **Package**: Install via `pip install -e .` — provides the `agent-vault` CLI
 - **Service**: Run `agent-vault-serve` to start the FastAPI HTTP service (credential resolution)
 - **UI**: Run `cd web && npm install && npm run dev` for the React frontend
+- **MCP**: Install `pip install -e ".[mcp]"` and run `agent-vault-mcp` to expose
+  the vault to AI agents over the Model Context Protocol (search / get / list /
+  status / submit-source / resolve-credential tools)
 
 The vault is now a **standalone product** (severed from SynapseNAS). It can be used
-independently or consumed by other services over HTTP.
+independently, consumed by other services over HTTP, or plugged into a fleet of
+agents over MCP as a shared, deterministic knowledgebase.
+
+### Retrieval: ranked, prose-aware search
+
+`agent-vault find <text>` and `GET /api/search?q=` run **ranked full-text search
+that reads inside the compiled prose bodies** (SQLite FTS5, bm25), not just a
+metadata substring match — so "forced-air heating" finds the furnace page even
+though that phrase appears only in its prose. Deterministic and rebuildable
+(`_index.db`, git-ignored); degrades to a metadata scan where FTS5 is
+unavailable. No model involved — this is read-side ranking, not generation.
 
 ## Install
 
