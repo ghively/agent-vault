@@ -72,7 +72,7 @@ samples. The *AI step* needs an external server you provide.
 | `build_index.py` — build the search index | ✅ **Real, working** | Only needs `pyyaml`. |
 | `synapse.py` — the query CLI | ✅ **Real, working** | Pure lookup over the index. |
 | `compiler.py` — **MockClient** | ✅ **Real, working** | Deterministic, offline, no network. Used by all tests/CI. |
-| `compiler.py` — **OllamaClient** (the real AI) | ⚙️ **Real code, external dependency** | Calls an [Ollama](https://ollama.com) server over HTTP. You must run that server yourself; nothing is bundled. Not exercised in this repo's tests. |
+| `compiler.py` — **OllamaClient** (the real AI) | ⚙️ **Real code, external dependency** | Calls an [Ollama](https://ollama.com) server over HTTP. You must run that server yourself; nothing is bundled. Its parsing and error handling are unit-tested with a mocked HTTP transport (`tests/test_ollama_client.py`); no live Ollama server is exercised in CI. |
 | `promote.py` — learn vocabulary from proposals | ✅ **Real, working** | Atomic, locked, idempotent. |
 | `reclassify_apply.py` — apply approved re-filings | ✅ **Real, working** | Two-phase, crash-recoverable. |
 | `lint.py` — anomaly report | ✅ **Real, working** | Read-only. |
@@ -418,15 +418,15 @@ about review items that have been sitting too long.
   requirements. None have been verified against live 1Password/Bitwarden/
   Vault accounts; `age` and `gpg` are the only two with a real
   encrypt→resolve round trip in the test suite.
-- **`OllamaClient` (the real AI path) has no test coverage today.** There is
-  no `tests/test_ollama_client.py` or equivalent — grepping `tests/` for
-  `OllamaClient`/`ollama` turns up nothing. Only `MockClient` (the offline,
-  deterministic path) is exercised, in `tests/test_compiler_only.py`. If
-  you're touching `agent_vault/compiler.py`'s `OllamaClient`
-  (`agent_vault/compiler.py:511`), you're extending untested code — consider
-  adding coverage (mock the HTTP transport; unreachable/HTTP-500/non-JSON
-  response handling is the obvious first pass) rather than assuming it's
-  already covered.
+- **`OllamaClient` (the real AI path) is unit-tested, but never against a
+  live Ollama server.** `tests/test_ollama_client.py` mocks the HTTP transport
+  (`urllib.request.urlopen`) and covers the happy path, request construction,
+  the unreachable-host / timeout / non-JSON / empty-response failure modes, and
+  `get_client` dispatch. What is *not* covered is a real round trip against a
+  running Ollama instance — that still requires you to stand one up. If you're
+  touching `agent_vault/compiler.py`'s `OllamaClient`
+  (`agent_vault/compiler.py:508`), extend the mocked-transport tests alongside
+  your change.
 - **The pattern library covers ~104 billers** (banks, brokerages, card
   issuers, P&C + health insurers, telecoms, utilities, streaming, subscriptions,
   retailers, pharmacies, travel) and **25 document shapes** (statements, bills,

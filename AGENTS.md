@@ -18,8 +18,9 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   `validate`, `lint`, `review`, `reclassify_apply`, `collections_importer`) —
   those have no console-script entry point.
 - **Service**: `agent-vault-serve` console script — FastAPI HTTP service with
-  18 routes (entities, credentials, review, jobs, run history, settings), not
-  just credential resolution. Full reference: [`docs/API.md`](docs/API.md).
+  27 routes (entities, credentials, review, jobs, run history, status/ask,
+  config, settings), not just credential resolution. Full reference:
+  [`docs/API.md`](docs/API.md).
 - **UI**: React web interface in `web/` — a window-manager desktop with 8
   apps. Full reference: [`web/README.md`](web/README.md).
 
@@ -160,10 +161,10 @@ path) has none (see `DOCS.md` §8).
 The vault is a **standalone HTTP service** (`agent-vault-serve`). Consumers
 (like SynapseNAS) call it over the network — no file-system or subprocess
 coupling, the boundary is HTTP + JSON. It exposes far more than credential
-resolution: 18 routes across entities, credentials, review, jobs (including
+resolution: 27 routes across entities, credentials, review, jobs (including
 SSE log streaming for running pipeline stages from a browser), run history,
-and settings. **Full reference: [`docs/API.md`](docs/API.md).** The two
-simplest:
+status/ask, config, and settings. **Full reference: [`docs/API.md`](docs/API.md).**
+The two simplest:
 
 - **Health**: `http://127.0.0.1:7778/api/health`
 - **Credential resolve**: `http://127.0.0.1:7778/api/creds/{slug}/resolve`

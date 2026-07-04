@@ -50,9 +50,9 @@ agent-vault-serve          # starts the FastAPI service
 #   VAULT_TOKEN (optional bearer token for auth)
 ```
 
-The service exposes 18 routes across entities, credentials, review, jobs,
-run history, and settings — see [`docs/API.md`](./docs/API.md) for the full
-reference, including the SSE job-streaming mechanism the web UI uses to run
+The service exposes 27 routes across entities, credentials, review, jobs,
+run history, status/ask, config, and settings — see [`docs/API.md`](./docs/API.md)
+for the full reference, including the SSE job-streaming mechanism the web UI uses to run
 pipeline stages from the browser. `/api/health` (liveness) and
 `/api/creds/{slug}/resolve` (credential resolution) are the two simplest.
 Interactive docs are also auto-served at `/docs` (Swagger UI) once the
@@ -70,9 +70,10 @@ npm run dev               # Vite dev server at http://localhost:5173
 
 The React UI is a window-manager-style desktop with 8 apps (Browse, Wiki,
 Vault, Credentials, Review, Pipeline, Command Deck, Settings) — see
-[`web/README.md`](./web/README.md) for the architecture, including a couple
-of known-unwired pieces (a dead sidebar component, an unimplemented Command
-Deck backend) worth knowing about before you touch it.
+[`web/README.md`](./web/README.md) for the architecture. All eight apps are
+wired to live endpoints (Command Deck runs off `GET /api/ask` + `GET /api/status`);
+the only remaining stubs are two cosmetic QuickPanel glyphs (power/restart)
+carried over from the shell it was ported from.
 
 ## Current state: Stages 0–6 complete (all follow-ups closed)
 
@@ -295,9 +296,9 @@ The vault is a **three-tier standalone product**:
    `python -m agent_vault.<module>` — see [`docs/API.md`](./docs/API.md) and
    the script reference in [`DOCS.md`](./DOCS.md#5-script-reference) for exact
    invocations.
-2. **Service tier** (`agent_vault/api/`) — FastAPI HTTP service exposing 18
+2. **Service tier** (`agent_vault/api/`) — FastAPI HTTP service exposing 27
    routes (entities, credentials, review queue, pipeline jobs, run history,
-   settings) — see [`docs/API.md`](./docs/API.md) for the full reference.
+   status/ask, config, settings) — see [`docs/API.md`](./docs/API.md) for the full reference.
 3. **UI tier** (`web/`) — React/TypeScript window-manager-style desktop — see
    [`web/README.md`](./web/README.md) for the architecture.
 
