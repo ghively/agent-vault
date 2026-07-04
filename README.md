@@ -99,26 +99,26 @@ The schema is queryable — every test question answered with no awkward workaro
   classifies via `registry/patterns.yaml` (biller patterns × shape patterns × file-type
   priors), extracts dates/amounts/IDs, writes entity stubs (frontmatter + link block,
   empty prose), refreshes `_index.json`.
-- `registry/patterns.yaml` — classifier vocabulary: ~64 billers (banks, brokerages,
+- `registry/patterns.yaml` — classifier vocabulary: ~104 billers (banks, brokerages,
   card issuers, insurers, telecoms, utilities, streaming, subscriptions, retailers)
-  + 12 shapes + file-type priors. Same anti-rot rule as schema/aliases: promotion
-  step writes; the LLM never does. `tests/test_patterns.py` guards integrity
-  (every `default_tag` exists in the schema; cross-link slugs valid; ids unique).
+  + ~25 shapes + file-type priors. Same anti-rot rule as schema/aliases: promotion
+  step writes; the LLM never does. `validate.py`'s `validate_patterns` pass guards
+  integrity (every `default_tag` exists in the schema; shape types map to real
+  schema subtypes; ids unique).
 - Email fan-out: an `.eml` with attachments emits one stub per logical subject (the
   email + each attachment as `path#fragment`), each classified independently.
-- `tests/generate_fixtures.py` — deterministic synthetic fixtures (~25 files: bank
-  statements, utility bills, warranties, order-confirmation emails, EXIF-tagged photos).
-- `tests/test_ingest.py` — sandbox driver: copies registry + fixtures into a tempdir,
-  runs ingest twice, validates everything, runs Agent Vault against the result.
+- `tests/test_ingest.py` — regression tests for the ingest writers and extractors
+  (YAML round-trip safety for ambiguous scalars, HTML-only email bodies, corrupt-PDF
+  degradation, duplicate-content manifest records).
 
-**Verified (Stage 2):** 25 fixtures → 27 stubs (2 email attachments fan out).
-20/27 confident (≥0.75) — banks, utilities, insurance, warranties, taxes, orders, one image-as-document.
-5/27 needs-review (photos at EXIF-only confidence, the personal "mom" email, a CSV mentioning BofA).
-2/27 unknown (a `.txt` note + a random binary blob). Re-ingest is a no-op.
-All 30 entities (3 seed + 27 ingested) pass `validate.py`.
+**Verified (Stage 2, historical):** during pre-standalone development, a 25-file
+synthetic fixture corpus produced 27 stubs (2 email attachments fan out), 20/27
+confident (≥0.75), 5/27 needs-review, 2/27 unknown; re-ingest was a no-op and all
+30 entities passed `validate.py`. That fixture corpus did not survive the split
+from SynapseNAS and does not ship in this repo (see `DOCS.md` §8).
 
 **Built (Stage 3) — compilation, the ONE LLM touchpoint:**
-- `compiler.py` — versioned prompt contract (`PROMPT_CONTRACT_VERSION = 1.3`),
+- `compiler.py` — versioned prompt contract (`PROMPT_CONTRACT_VERSION = 2.0`),
   swappable client interface, driver that finds `status: stub` entities AND
   any compiled entity whose `sources_hash` has drifted from
   `compiled_from_hash`. Writes prose only. Sanitizes any frontmatter or
@@ -197,12 +197,12 @@ default to the parent directory of the script. Pick any runner (cron,
 systemd timer, Hermes trigger, n8n workflow, Makefile, manual shell): the
 file contract is what stays put.
 
-**Verified (Stage 5):** in the smoke test, all three cadences run cleanly
-in order against a fresh sandbox: daily produces 27 stubs from 25 raw
-files, weekly compiles 22 of them (mock client) and runs an empty
-promote pass, monthly writes its report. In a separate phase the test
-intentionally injects each of the seven anomaly types and confirms
-lint surfaces every one.
+**Verified (Stage 5, historical):** during pre-standalone development, a
+cadences smoke test ran all three cadences cleanly in order against a
+fresh sandbox (daily → 27 stubs, weekly → 22 compiled via mock client,
+monthly → lint report; each injected anomaly type surfaced by lint).
+That smoke test lived in the SynapseNAS tree and does not ship here —
+the cadence scripts are currently exercised manually.
 
 **Built (Stage 6) — collections importer for catalog media:**
 - `collections_importer.py` — turns library exports (Steam, Goodreads,
@@ -248,12 +248,12 @@ imports zero new rows. Unrecognized formats are flagged, not crashed.
   `discovery/promoted.jsonl`, so re-running is a no-op.
 - `--dry-run` to preview the plan. `--slug X` to apply only one.
 
-**Verified (Follow-ups A+B):** the cadences smoke test now reports
-18 inferred entities created on a fresh vault, eliminating all biller-
-pattern broken refs. The reclassify test exercises both a same-type
-(subtype-only) change and a cross-type move with cross-reference
-rewriting; re-running is a no-op; `validate.py` passes on the
-resulting tree.
+**Verified (Follow-ups A+B, historical):** the pre-standalone smoke test
+reported 18 inferred entities created on a fresh vault, eliminating all
+biller-pattern broken refs, and exercised both a same-type (subtype-only)
+reclassify and a cross-type move with cross-reference rewriting
+(re-running a no-op, `validate.py` passing). As above, that harness does
+not ship in this repo.
 
 **Built (Follow-up C) — the human review loop (`review.py`):**
 - The spec's missing approve/reject mechanism. Two queues, one tool:

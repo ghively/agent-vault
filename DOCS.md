@@ -64,8 +64,7 @@ slice of every file (see [§4](#4-the-data-contract)).
 ## 2. Implementation status: real vs scaffolding
 
 The *machine* is real and tested. The *contents* shipped in this repo are
-samples. The *AI step* needs an external server you provide. And one advertised
-feature — credential resolution — is described but not built.
+samples. The *AI step* needs an external server you provide.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
@@ -237,7 +236,6 @@ and must pass a **deterministic validation gate** before promotion:
 time** — a human click can never bypass it. If a mapping fails, it is rejected
 with the precise reason. Field extraction is also **strictly additive** to
 built-in extractors and **secret-scanned** at ingest.
-writes the vocabulary it later reads.
 
 ### Rules that never bend (from the spec)
 
@@ -487,5 +485,3 @@ about review items that have been sitting too long.
 - **Cadence** — a scheduled wrapper script (daily/weekly/monthly).
 - **Credential reference** — a `scheme://store/path` URI pointing at where a
   secret lives; the secret itself is never stored in the vault.
-</content>
-</invoke>

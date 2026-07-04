@@ -21,7 +21,11 @@ start=$(date +%s)
 val_rc=0
 python3 -m agent_vault.validate . || val_rc=$?
 
-# 2. Lint pass. Read-only; report always stored for tooling.
+# 2. Lint pass. Read-only; report always stored for tooling. Marker file so
+#    we never report a STALE issue count from a previous run's report if lint
+#    dies before writing (`! -ot` = "not older than", safe on equal mtimes).
+mkdir -p discovery
+touch discovery/.lint_run_marker
 lint_rc=0
 python3 -m agent_vault.lint . --report discovery/_lint_report.json || lint_rc=$?
 
@@ -30,9 +34,10 @@ rc=0
 [ "$val_rc" -ne 0 ] && rc="$val_rc"   # validate failure outranks lint findings
 
 issues="?"
-if [ -f discovery/_lint_report.json ]; then
+if [ -f discovery/_lint_report.json ] && [ ! discovery/_lint_report.json -ot discovery/.lint_run_marker ]; then
     issues=$(python3 -c 'import json;print(json.load(open("discovery/_lint_report.json"))["total_issues"])' 2>/dev/null || echo "?")
 fi
+rm -f discovery/.lint_run_marker
 
 record_run monthly "$rc" "$(( $(date +%s) - start ))" "validate_rc=$val_rc lint_rc=$lint_rc issues=$issues"
 if [ "$rc" -eq 0 ]; then
