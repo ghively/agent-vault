@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { useEntities } from "../api/hooks";
+import { useEntities, useSchema } from "../api/hooks";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { EntityRow } from "../api/types";
 
-const TYPE_CHIPS = ["all", "asset", "account", "policy", "contact", "document", "appliance", "vehicle", "property"];
+// Fallback chips until the live taxonomy loads (or if /api/schema errors), so
+// the filter row is never empty. The real chips are derived from the schema.
+const FALLBACK_CHIPS = ["all", "asset", "account", "document", "vehicle", "property"];
 
 function statusColor(status: string): string {
   if (status === "compiled") return C.greenSoft;
@@ -22,6 +24,13 @@ export function Browse() {
     const t = setTimeout(() => setDebouncedQuery(query), 250);
     return () => clearTimeout(t);
   }, [query]);
+
+  // F7: derive the type chips from the live vault taxonomy (/api/schema) so they
+  // never drift from the registry; fall back to a static set during load/error.
+  const schema = useSchema();
+  const typeChips = schema.data?.types.length
+    ? ["all", ...schema.data.types.map((t) => t.type)]
+    : FALLBACK_CHIPS;
 
   const { data, isLoading, isError } = useEntities(debouncedQuery, typeFilter === "all" ? "" : typeFilter);
   const rows: EntityRow[] = data?.rows ?? [];
@@ -74,7 +83,7 @@ export function Browse() {
 
       {/* Type chips */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 14 }}>
-        {TYPE_CHIPS.map((chip) => {
+        {typeChips.map((chip) => {
           const active = typeFilter === chip;
           return (
             <span

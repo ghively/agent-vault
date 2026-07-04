@@ -23,8 +23,10 @@ export function Waybar() {
   const entities = useReviewEntities();
   const config = useConfig();
 
-  const reviewCount = proposals.data?.items?.length ?? 0;
-  const entityCount = entities.data?.items?.length ?? 0;
+  // Show "!" on an API error rather than a confident "0", so a broken endpoint
+  // reads as unknown instead of "nothing to review" (F6).
+  const reviewCount = proposals.isError ? "!" : proposals.data?.items?.length ?? 0;
+  const entityCount = entities.isError ? "!" : entities.data?.items?.length ?? 0;
   const compilerLabel = config.data?.env?.AGENT_VAULT_COMPILER ?? "mock";
 
   useEffect(() => {

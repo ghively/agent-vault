@@ -379,8 +379,13 @@ then the read/write interface agents actually need, then operational maturity.
    - ~~**O4·3** (cited RAG answers)~~ — ✅ **done** (`rag.py`: pluggable answerer
      + offline MockAnswerer; retrieval-grounded, citations verified against the
      retrieved context, `grounded` flag; `GET /api/answer` + `vault_ask` MCP tool).
-8. **F1/F2** (top-level error boundary + SSE cancel/abort) — frontend robustness
-   for the human operator/reviewer of the shared KB.
+8. ~~**F1/F2** (top-level error boundary + SSE cancel/abort)~~ — ✅ **done**
+   (root `ErrorBoundary` with reload recovery around the shell; Pipeline wires an
+   `AbortController` + Cancel button + stall-timeout, aborts on unmount, and
+   invalidates status/review queries on job completion — F6). Also **F3** (only
+   the 8 used icons bundled, not 48), **F7** (Browse type chips derived from
+   `/api/schema`), **F8** (ESLint 9 flat config + `npm run lint` + CI step;
+   dead-code cleanups), and Waybar badges show `!` on API error not a false `0`.
 9. **O2 / O8** (backup+export, schema versioning) — safety net + upgrade path for
    a shared system of record.
    - ~~**O2** (vault snapshot / export / restore)~~ — ✅ **done**

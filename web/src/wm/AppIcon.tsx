@@ -1,16 +1,28 @@
 import React from "react";
 import { APPS, ICON_FILE, type AppId } from "./apps";
 
-// Eagerly import every generated app-tile PNG so Vite bundles them into
-// dist/assets (they ship with the build). Keyed by icon name (filename stem).
-const ICON_MODULES = import.meta.glob("../assets/icons/*.png", {
-  eager: true,
-}) as Record<string, { default: string }>;
-const ICON_BY_NAME: Record<string, string> = {};
-for (const [path, mod] of Object.entries(ICON_MODULES)) {
-  const stem = path.split("/").pop()?.replace(/\.png$/, "");
-  if (stem) ICON_BY_NAME[stem] = mod.default;
-}
+// Import ONLY the icons the 8 registered apps actually use, so Vite bundles
+// those 8 PNGs and not the ~40 leftover tiles that used to ship via an eager
+// glob of the whole icons/ directory (F3 — dead bundle weight).
+import browseIcon from "../assets/icons/browse.png";
+import wikiIcon from "../assets/icons/wiki.png";
+import vaultIcon from "../assets/icons/vault.png";
+import credsIcon from "../assets/icons/creds.png";
+import reviewIcon from "../assets/icons/review.png";
+import pipelineIcon from "../assets/icons/pipeline.png";
+import commandIcon from "../assets/icons/command.png";
+import settingsIcon from "../assets/icons/settings.png";
+
+const ICON_BY_NAME: Record<string, string> = {
+  browse: browseIcon,
+  wiki: wikiIcon,
+  vault: vaultIcon,
+  creds: credsIcon,
+  review: reviewIcon,
+  pipeline: pipelineIcon,
+  command: commandIcon,
+  settings: settingsIcon,
+};
 
 /**
  * Uniform app icon. Renders the generated PNG tile when one exists for the

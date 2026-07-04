@@ -28,8 +28,6 @@ function statusLabel(status: string): string {
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
-interface GroupState { type: string; items: EntityRow[]; open: boolean }
-
 function IndexPane({
   wikiQuery,
   setWikiQuery,

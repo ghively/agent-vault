@@ -36,6 +36,24 @@ describe("ErrorBoundary", () => {
     expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
   });
 
+  it("shows a custom title and a reload button in reloadOnFail mode (F1)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reload = vi.fn();
+    // jsdom's window.location.reload is non-configurable; stub via defineProperty.
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, reload },
+      writable: true,
+    });
+    render(
+      <ErrorBoundary title="Agent Vault hit an error" reloadOnFail>
+        <Boom crash />
+      </ErrorBoundary>
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Agent Vault hit an error");
+    await userEvent.click(screen.getByRole("button", { name: "reload" }));
+    expect(reload).toHaveBeenCalled();
+  });
+
   it("recovers when resetKey changes and the child no longer throws", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { rerender } = render(

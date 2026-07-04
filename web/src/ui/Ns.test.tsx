@@ -1,5 +1,5 @@
 // web/src/ui/Ns.test.tsx
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { NsButton, NsToggle, NsCapacityBar, NsTitle, NsChip, NsStat, NsInput } from "./Ns";
@@ -21,9 +21,8 @@ test("NsButton green and red variants render", () => {
 });
 
 test("NsToggle shows checked state via aria-checked and toggles on click", async () => {
-  let val = false;
-  const onChange = vi.fn((v: boolean) => { val = v; });
-  const { rerender } = render(<NsToggle on={false} onChange={onChange} label="SMB" />);
+  const onChange = vi.fn();
+  render(<NsToggle on={false} onChange={onChange} label="SMB" />);
   const sw = screen.getByRole("switch", { name: "SMB" });
   expect(sw).toHaveAttribute("aria-checked", "false");
   await userEvent.click(sw);
