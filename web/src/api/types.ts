@@ -1,12 +1,14 @@
 export interface DueItem { slug: string; title: string; date: string; days: number }
 export interface ExpItem extends DueItem { field: "expires" | "renews" }
 export interface Run { cadence: string; ts: string; rc: number; duration_s: number; detail: string }
+export interface IndexStatus { generated: string | null; count: number; stale: boolean }
 export interface StatusResponse {
   counts: { total: number; compiled: number; needs_review: number };
   due: DueItem[];
   expiring: ExpItem[];
   breakdown: Record<string, number>;
   last_run: Run | null;
+  index?: IndexStatus;
 }
 export interface EntityRow {
   slug: string; ts: string; type: string; subtype: string;

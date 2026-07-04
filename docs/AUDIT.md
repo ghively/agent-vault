@@ -363,8 +363,13 @@ then the read/write interface agents actually need, then operational maturity.
    `AuditMiddleware` appends every write/resolve to `discovery/_access.jsonl`
    with the actor (never bodies/secrets) — closing the B5 "resolve unaudited"
    gap; MCP `submit_source` already stamps `_submissions.jsonl`.
-6. **O7** (index freshness / multi-writer consistency) — no stale reads after a
-   concurrent write; document/extend the locking boundary.
+6. ~~**O7** (index freshness / multi-writer consistency)~~ — ✅ **done**
+   (`build_index.reindex()` is the single argv-free rebuild every mutating pass
+   calls; the compile pass + recompile endpoint now reindex too, so status never
+   reads stale; `GET /api/status` carries an `index` freshness block with a
+   `stale` flag for the direct-file-edit edge). Also B1 (startup config
+   validation), B8 (single index parse in list), B9 (race-guarded entity reads →
+   404 not 500).
 7. **O4·2 → O4·3** (semantic retrieval → cited RAG answers) — the biggest
    capability leap; sequence after the FTS index and MCP surface exist.
    - ~~**O4·2** (semantic + hybrid retrieval)~~ — ✅ **done** (`embeddings.py`

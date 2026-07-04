@@ -423,6 +423,25 @@ def test_entities_response_shape_matches_synapsenas():
     assert set(data["items"][0].keys()) == {"slug", "title", "ref", "backend"}
 
 
+def test_entity_detail_404_when_file_deleted_after_index():
+    """B9: an entity present in the index but whose file was removed (concurrent
+    mutation) returns 404, not an unhandled 500."""
+    vault = create_test_vault()
+    # Remove the on-disk file while the index still lists it.
+    (vault / "entities" / "account" / "bofa-checking.md").unlink()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    assert client.get("/api/entities/bofa-checking").status_code == 404
+
+
+def test_status_reports_index_freshness():
+    """O7: GET /api/status carries an index freshness block."""
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    data = client.get("/api/status").json()
+    assert "index" in data
+    assert set(data["index"].keys()) >= {"generated", "count", "stale"}
+
+
 def test_search_endpoint_empty_query():
     """GET /api/search with no query returns an empty hit list, not an error."""
     vault = create_test_vault()

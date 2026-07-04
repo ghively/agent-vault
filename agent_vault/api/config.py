@@ -7,6 +7,7 @@ No external dependencies — plain dataclass reading os.environ directly.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 
 
@@ -39,9 +40,30 @@ class Settings:
         Returns:
             Settings instance with values from env or defaults
         """
+        raw_port = os.environ.get("AGENT_VAULT_PORT", "7778")
+        try:
+            port = int(raw_port)
+        except ValueError as e:
+            raise SystemExit(
+                f"AGENT_VAULT_PORT must be an integer, got {raw_port!r}: {e}"
+            ) from e
+        if not (0 < port < 65536):
+            raise SystemExit(f"AGENT_VAULT_PORT out of range (1-65535): {port}")
         return cls(
             host=os.environ.get("AGENT_VAULT_HOST", "127.0.0.1"),
-            port=int(os.environ.get("AGENT_VAULT_PORT", "7778")),
+            port=port,
             vault_path=os.environ.get("AGENT_VAULT_PATH", "."),
             token=os.environ.get("VAULT_TOKEN", ""),
         )
+
+    def validate(self) -> None:
+        """Fail fast with an actionable message if the vault path is wrong.
+
+        Called at service startup (serve.py) so a misconfigured AGENT_VAULT_PATH
+        surfaces as a clear boot error instead of confusing empty reads / 404s.
+        """
+        if not os.path.isdir(self.vault_path):
+            print(f"error: AGENT_VAULT_PATH {self.vault_path!r} is not a directory "
+                  f"(set it to your vault root, containing entities/ and registry/)",
+                  file=sys.stderr)
+            raise SystemExit(2)

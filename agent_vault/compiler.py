@@ -893,6 +893,15 @@ def _compile_all_locked(vault, client=None, limit=None, only=None):
             out["total_source_chars_sent"] += r.get("source_chars_sent", 0)
         else:
             out["failed"].append(r)
+    # A compile flips status stub->compiled, which the search index reflects.
+    # Rebuild it in-process (under the caller's lock) so readers — including the
+    # recompile HTTP endpoint's response — never see a stale `stub` afterwards.
+    if out["compiled"]:
+        try:
+            from . import build_index
+            build_index.reindex(vault, quiet=True)
+        except Exception as e:  # noqa: BLE001 - never let reindex fail the compile
+            print(f"warn: reindex after compile failed: {e}", file=sys.stderr)
     return out
 
 
