@@ -36,9 +36,34 @@ LINKS_RE = re.compile(r"<!-- LINKS:BEGIN -->.*?<!-- LINKS:END -->", re.S)
 FIELD_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,30}$")
 
 
+# The schema-file format version this code understands. Bump ONLY alongside a
+# registered migration in agent_vault/migrate.py (see O8). validate.py gates on
+# it so a vault written by a newer/older codebase fails loudly with a pointer to
+# the migration, instead of being silently mis-validated.
+SCHEMA_VERSION = 1
+
+
 def load_schema(vault):
     with open(os.path.join(vault, "registry", "schema.yaml")) as f:
         return yaml.safe_load(f)
+
+
+def validate_schema_version(schema):
+    """Return errors if schema.yaml's `version` doesn't match this code (O8)."""
+    errs = []
+    v = schema.get("version") if isinstance(schema, dict) else None
+    if v is None:
+        errs.append("registry/schema.yaml: missing `version:` (expected "
+                    f"{SCHEMA_VERSION}) — run `python -m agent_vault.migrate check`")
+    elif not isinstance(v, int):
+        errs.append(f"registry/schema.yaml: `version` must be an integer, got {v!r}")
+    elif v > SCHEMA_VERSION:
+        errs.append(f"registry/schema.yaml: version {v} is newer than this code "
+                    f"understands ({SCHEMA_VERSION}) — upgrade agent-vault")
+    elif v < SCHEMA_VERSION:
+        errs.append(f"registry/schema.yaml: version {v} predates {SCHEMA_VERSION} "
+                    f"— run `python -m agent_vault.migrate apply` to upgrade")
+    return errs
 
 
 def _secret_scanner(vault):
@@ -399,8 +424,8 @@ def main():
                 print(f"        ~ {w}")
         else:
             print(f"ok    {rel}")
-    # --- registry file validation (field_mappings.yaml + patterns.yaml) ---
-    reg_errs = []
+    # --- registry file validation (schema version + field_mappings + patterns) ---
+    reg_errs = list(validate_schema_version(schema))
     for fn in (validate_field_mappings, validate_patterns):
         for e in fn(vault):
             reg_errs.append(e)

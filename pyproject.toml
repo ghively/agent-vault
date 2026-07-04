@@ -25,6 +25,7 @@ agent-vault = "agent_vault.synapse:main"
 agent-vault-serve = "agent_vault.serve:main"
 agent-vault-mcp = "agent_vault.mcp_server:main"
 agent-vault-backup = "agent_vault.backup:main"
+agent-vault-migrate = "agent_vault.migrate:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_vault"]
