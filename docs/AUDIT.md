@@ -64,7 +64,16 @@ Verified-solid subsystems (audited, **not** gaps):
 
 ### 2.1 Confirmed defects (fix first)
 
-#### D1 — `POST /api/entities/{slug}/recompile` self-deadlocks in production · **HIGH · confirmed**
+#### D1 — `POST /api/entities/{slug}/recompile` self-deadlocks in production · **HIGH · confirmed · ✅ FIXED**
+
+> **Resolved.** The endpoint now calls the lock-free `compiler._compile_all_locked`
+> inside the single lock it already holds (`api/creds.py`), so the status flip and
+> the compile stay atomic under one acquisition and never re-enter `flock`. A new
+> real-path regression test (`tests/api/test_creds.py::test_recompile_entity_real_compile_no_deadlock`)
+> drives the endpoint with the offline MockClient and a 5 s lock timeout — it
+> compiles and returns instead of stalling, and would fail fast if the deadlock
+> returned. The three shape/auth tests now mock the function actually called.
+
 
 `api/creds.py:166` opens `with vault_lock(str(vault)):` and then, still holding
 it, calls `compiler.compile_all(...)` at `creds.py:193`, which at
@@ -88,7 +97,20 @@ flags.
   `edit.py:14-18` and `review.cmd_approve` already use. Add an integration test
   (mock compiler, `pytest-timeout`) that drives the real path.
 
-#### D2 — Fire-and-forget job tasks can be GC'd; runs are unpersisted & unrecorded · **HIGH**
+#### D2 — Fire-and-forget job tasks can be GC'd; runs are unpersisted & unrecorded · **HIGH · ✅ PARTLY FIXED**
+
+> **Resolved (task GC + run recording).** `run_job_endpoint` now retains a strong
+> reference to the background task in a module-level `_background_tasks` set and
+> drops it via a done-callback, so a running job can't be garbage-collected
+> mid-execution. `run_job` appends a completion record to `discovery/_runs.jsonl`
+> in a `finally` (every terminal outcome, success or failure), matching the
+> `cadences/run_cadence.py` record shape plus additive `source: "api-job"` /
+> `job_id` fields — so `GET /api/runs` and the dashboard `last_run` now include
+> web-triggered runs. Covered by four new tests in `tests/api/test_jobs.py`.
+> **Still open:** the `JobRegistry` remains in-memory, so live job *status* (not
+> the run-history record) is still lost on a service restart — acceptable for the
+> single-host posture but noted for a future durable-registry pass.
+
 
 `api/jobs.py:358` does `asyncio.create_task(run_job(...))` and discards the
 handle. CPython keeps only a *weak* reference to a bare task, so a running job
@@ -292,10 +314,10 @@ content" the README already anticipates.
 Ordered for a **shared multi-agent LLM wiki** — concurrency correctness first,
 then the read/write interface agents actually need, then operational maturity.
 
-1. **D1** (recompile deadlock) + its integration test — a confirmed production
-   defect that CI hides; with agents driving recompiles it is hit constantly.
-2. **D2** (job task GC + `_runs.jsonl` recording) — correctness of the whole
-   agent-driven pipeline path, and the run-history contract readers rely on.
+1. ~~**D1** (recompile deadlock) + its integration test~~ — ✅ **done** (lock-free
+   `_compile_all_locked` under the held lock; real-path regression test added).
+2. ~~**D2** (job task GC + `_runs.jsonl` recording)~~ — ✅ **done** (strong task
+   ref + `finally` run-history append; four tests). Durable job *registry* still open.
 3. **O4·1** (full-text search over prose) — the single biggest lift to how well
    agents can *read* the wiki; unblocks O4·2/O4·3.
 4. **O1** (MCP server) — the native surface for a fleet of agents to read and

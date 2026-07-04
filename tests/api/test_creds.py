@@ -222,7 +222,8 @@ def test_recompile_entity_success():
     app = create_app(settings)
     client = TestClient(app)
 
-    # Mock the compiler.compile_all to avoid actual compilation
+    # Mock the lock-free compile primitive the endpoint calls (see D1) to
+    # avoid actual compilation in this shape-only test.
     mock_compile_result = {
         "client": "mock",
         "contract_version": "2.0",
@@ -231,7 +232,7 @@ def test_recompile_entity_success():
         "proposals_logged": 0
     }
 
-    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+    with patch('agent_vault.api.creds.compiler._compile_all_locked', return_value=mock_compile_result):
         # Trigger recompile
         response = client.post("/api/entities/stub-entity/recompile")
         assert response.status_code == 200
@@ -242,6 +243,39 @@ def test_recompile_entity_success():
     # The entity should still exist (compile doesn't delete files)
     entity_path = vault / "entities" / "account" / "stub-entity.md"
     assert entity_path.exists()
+
+
+def test_recompile_entity_real_compile_no_deadlock(monkeypatch):
+    """Regression test for D1: the endpoint holds the vault write lock and then
+    compiles. Before the fix it called compiler.compile_all(), which re-acquired
+    the same non-reentrant flock and self-deadlocked until the lock timeout
+    (default 600s) -> 503. This test runs the REAL compile path (no mock of the
+    compiler) with the offline MockClient; if the deadlock ever returns it hangs
+    and pytest-timeout (120s, set in pyproject.toml) fails it instead of a stall.
+    """
+    monkeypatch.setenv("AGENT_VAULT_COMPILER", "mock")
+    # Keep the lock timeout short so a regression fails fast rather than after
+    # the 600s default (still exercises the same acquire path).
+    monkeypatch.setenv("AGENT_VAULT_LOCK_TIMEOUT_S", "5")
+
+    vault = create_test_vault_with_compilable_entity()
+    settings = Settings(vault_path=str(vault), token="")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.post("/api/entities/stub-entity/recompile")
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+    # The stub was eligible, so the real MockClient pass should have compiled it.
+    assert data.get("client", "").startswith("mock")
+    compiled_slugs = {c.get("slug") for c in data.get("compiled", [])}
+    assert "stub-entity" in compiled_slugs, data
+
+    # The on-disk entity must end in a coherent state: compiled, with prose,
+    # never left as the transient stub-with-prose the pre-fix failure produced.
+    text = (vault / "entities" / "account" / "stub-entity.md").read_text()
+    assert "status: compiled" in text
 
 
 def test_recompile_entity_invalid_slug():
@@ -297,7 +331,7 @@ def test_creds_response_shape_matches_synapsenas():
         "failed": [],
     }
 
-    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+    with patch('agent_vault.api.creds.compiler._compile_all_locked', return_value=mock_compile_result):
         response = client2.post("/api/entities/stub-entity/recompile")
         data = response.json()
         # Compile result structure (may vary based on compiler result)
@@ -342,7 +376,7 @@ def test_recompile_with_auth_token():
         "failed": [],
     }
 
-    with patch('agent_vault.api.creds.compiler.compile_all', return_value=mock_compile_result):
+    with patch('agent_vault.api.creds.compiler._compile_all_locked', return_value=mock_compile_result):
         # With correct token
         response = client.post(
             "/api/entities/stub-entity/recompile",

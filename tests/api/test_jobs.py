@@ -98,6 +98,125 @@ def test_job_run_compile_success():
     assert "stderr" in status_data
 
 
+def test_run_job_records_completion_to_runs_jsonl(monkeypatch):
+    """D2: a finished API job appends a record to discovery/_runs.jsonl so the
+    web-triggered path shares the run-history contract the cadences honor.
+
+    We swap _build_command for a trivial, instant subprocess so the test
+    exercises run_job's completion/recording contract without depending on any
+    pipeline module's runtime.
+    """
+    vault = create_test_vault()
+    job = jobs_module.Job(id="testjob01", op="lint", args=[])
+    monkeypatch.setattr(
+        jobs_module, "_build_command",
+        lambda op, args: [sys.executable, "-c", "print('done')"],
+    )
+
+    asyncio.run(jobs_module.run_job(job, vault))
+
+    assert job.status == "completed"
+    assert job.returncode == 0
+
+    runs = vault / "discovery" / "_runs.jsonl"
+    assert runs.exists()
+    recs = [json.loads(x) for x in runs.read_text().splitlines() if x.strip()]
+    assert len(recs) == 1
+    rec = recs[0]
+    # Shape matches cadences/run_cadence.py record + additive source/job_id.
+    assert rec["cadence"] == "lint"
+    assert rec["rc"] == 0
+    assert rec["detail"] == "ok"
+    assert rec["source"] == "api-job"
+    assert rec["job_id"] == "testjob01"
+    assert "ts" in rec and isinstance(rec["duration_s"], int)
+
+
+def test_run_job_records_failure_with_detail(monkeypatch):
+    """D2: a failed job still records (finally-block), with rc and a stderr tail."""
+    vault = create_test_vault()
+    job = jobs_module.Job(id="failjob01", op="compile", args=[])
+    monkeypatch.setattr(
+        jobs_module, "_build_command",
+        lambda op, args: [
+            sys.executable, "-c",
+            "import sys; sys.stderr.write('boom\\n'); sys.exit(3)",
+        ],
+    )
+
+    asyncio.run(jobs_module.run_job(job, vault))
+
+    assert job.status == "failed"
+    assert job.returncode == 3
+    recs = [
+        json.loads(x)
+        for x in (vault / "discovery" / "_runs.jsonl").read_text().splitlines()
+        if x.strip()
+    ]
+    assert recs[-1]["cadence"] == "compile"
+    assert recs[-1]["rc"] == 3
+    assert "boom" in recs[-1]["detail"]
+
+
+def test_recorded_job_run_visible_in_history_and_status(monkeypatch):
+    """D2: a recorded job run surfaces in GET /api/runs and the dashboard's
+    last_run — the two consumers that previously omitted every web-triggered run.
+    """
+    vault = create_test_vault()
+    job = jobs_module.Job(id="visiblejob", op="ingest", args=[])
+    monkeypatch.setattr(
+        jobs_module, "_build_command",
+        lambda op, args: [sys.executable, "-c", "print('x')"],
+    )
+    asyncio.run(jobs_module.run_job(job, vault))
+
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+
+    runs = client.get("/api/runs").json()["runs"]
+    assert any(r.get("job_id") == "visiblejob" for r in runs)
+
+    last_run = client.get("/api/status").json()["last_run"]
+    assert last_run is not None
+    assert last_run["cadence"] == "ingest"
+    assert last_run["rc"] == 0
+
+
+def test_run_job_endpoint_retains_task_reference(monkeypatch):
+    """D2: the run endpoint keeps a strong reference to the background task so it
+    can't be garbage-collected mid-run (asyncio holds only a weak ref to a bare
+    create_task result). While the job is in flight the task must be in
+    _background_tasks; once it finishes the done-callback drops it.
+    """
+    vault = create_test_vault()
+
+    async def _driver():
+        gate = asyncio.Event()
+
+        async def _blocking_run(job, vault_path):
+            job.status = "running"
+            await gate.wait()
+            job.status = "completed"
+
+        # The endpoint references run_job as a module global; patch it to a
+        # coroutine we can hold open so the assertion window is deterministic.
+        monkeypatch.setattr(jobs_module, "run_job", _blocking_run)
+
+        req = jobs_module.JobRunRequest(op="lint", args=["--json"])
+        settings = Settings(vault_path=str(vault), token="")
+        before = len(jobs_module._background_tasks)
+
+        await jobs_module.run_job_endpoint(req, settings)
+        # Task created and still pending (gate not set) -> must be retained.
+        assert len(jobs_module._background_tasks) == before + 1
+
+        gate.set()
+        for _ in range(5):  # let the task finish and its done-callback fire
+            await asyncio.sleep(0)
+        assert len(jobs_module._background_tasks) == before
+
+    asyncio.run(_driver())
+
+
 def test_job_get_status_not_found():
     """Test that getting status for non-existent job returns 404."""
     vault = create_test_vault()

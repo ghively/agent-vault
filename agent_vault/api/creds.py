@@ -189,8 +189,15 @@ async def recompile_entity(
             Path(tmp).write_text(out, encoding="utf-8")
             os.replace(tmp, str(entity_path))
 
-            # Run compile for just this entity
-            result: dict[str, Any] = compiler.compile_all(str(vault), only=slug)  # type: ignore[no-untyped-call]  # legacy untyped compile fn
+            # Run compile for just this entity. We are ALREADY holding the
+            # vault lock, and flock is NOT re-entrant across two open()s in one
+            # process — so calling the public compiler.compile_all() here (which
+            # re-acquires the lock) would self-deadlock until the lock timeout
+            # (default 600s) and then 503. Call the lock-free primitive instead;
+            # the status flip above and this compile stay atomic under the one
+            # lock we hold. Mirrors edit.py's "mutate under the lock, delegate to
+            # the lock-free path" pattern. See docs/AUDIT.md D1.
+            result: dict[str, Any] = compiler._compile_all_locked(str(vault), only=slug)  # type: ignore[no-untyped-call]  # legacy untyped compile fn
 
             return result
 
