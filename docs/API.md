@@ -112,6 +112,7 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | POST | `/api/jobs/run` | yes* | Start a pipeline stage as a subprocess. Body: `{"op": "ingest"\|"compile"\|"promote"\|"reclassify_apply"\|"lint"\|"compact", "args": []}` → `{"job_id", "status"}`. Unknown op → `422`; args outside the per-op allowlist (see below) → `400` |
 | GET | `/api/jobs/{job_id}` | yes* | Poll job status: `{"job_id", "status", "returncode", "stdout": [...last 100 lines], "stderr": [...]}` |
 | GET | `/api/jobs/{job_id}/stream` | yes* | **Server-Sent Events** stream of live `stdout`/`stderr` lines, ending in an `end` event with `{"status", "returncode"}` |
+| DELETE | `/api/jobs/{job_id}` | yes* | Cancel a running job (terminates its subprocess) → `{"job_id", "status", "cancelled"}`. Unknown → `404`; cancelling a finished job is an idempotent no-op (`cancelled:false`) |
 | GET | `/api/runs` | yes* | Cadence run history from `discovery/_runs.jsonl`, newest-first. `?limit=50` (0–1000) |
 | GET | `/api/ledgers` | yes* | Entry counts for `discovery/proposals.jsonl`, `discovery/promoted.jsonl`, `raw/_manifest.jsonl` |
 | GET | `/api/settings` | yes* | Read-only config overview: service (host/port/vault_path/auth_enabled), vault (entity_count/index_built), compiler (prompt_contract_version/ollama_model), resolvers (default + configured backends), cadences (files present) |

@@ -231,6 +231,51 @@ def test_run_job_endpoint_retains_task_reference(monkeypatch):
     asyncio.run(_driver())
 
 
+def test_cancel_job_not_found():
+    """DELETE /jobs/{id} for an unknown job is 404 (B7)."""
+    vault = create_test_vault()
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    assert client.delete("/api/jobs/nope").status_code == 404
+
+
+def test_cancel_finished_job_is_noop():
+    """Cancelling an already-finished job is idempotent, not an error (B7)."""
+    vault = create_test_vault()
+    reg = jobs_module.get_registry()
+    job = reg.create("lint", [])
+    job.status = "completed"
+    job.returncode = 0
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    r = client.delete(f"/api/jobs/{job.id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["cancelled"] is False
+    assert data["status"] == "completed"
+
+
+def test_cancel_running_job_terminates(monkeypatch):
+    """Cancelling a running job terminates its subprocess and marks it failed (B7)."""
+    vault = create_test_vault()
+    reg = jobs_module.get_registry()
+    job = reg.create("lint", [])
+    job.status = "running"
+
+    terminated = {"v": False}
+
+    class _FakeProc:
+        returncode = None
+        def terminate(self):
+            terminated["v"] = True
+
+    job.proc = _FakeProc()  # type: ignore[assignment]
+    client = TestClient(create_app(Settings(vault_path=str(vault), token="")))
+    r = client.delete(f"/api/jobs/{job.id}")
+    assert r.status_code == 200
+    assert r.json()["cancelled"] is True
+    assert terminated["v"] is True
+    assert job.status == "failed"
+
+
 def test_job_get_status_not_found():
     """Test that getting status for non-existent job returns 404."""
     vault = create_test_vault()

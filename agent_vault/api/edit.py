@@ -159,6 +159,15 @@ def _secret_in_frontmatter(fm: dict[str, Any], fm_text: str) -> str | None:
                 return (f"frontmatter field '{k}' looks like a plaintext secret "
                         f"({kind}); reference it via credential_ref, never store "
                         f"the secret")
+            # B4: the human-edit path also applies the BROAD labeled/entropy
+            # heuristic (e.g. `password: Hunter2!`), which validate.py's strict
+            # gate deliberately skips. False positives are recoverable here (the
+            # editor sees a 422 and adjusts), so it's the right place to be strict.
+            broad = secret_scan.scan(sval)  # type: ignore[no-untyped-call]
+            if broad:
+                return (f"frontmatter field '{k}' contains a secret-shaped value "
+                        f"({broad[0].get('kind', 'labeled secret')}); reference it "
+                        f"via credential_ref, never store the secret")
     for line in fm_text.splitlines():
         ls = line.strip()
         if not ls.startswith("#"):
@@ -446,9 +455,14 @@ def patch_entity(
             raise HTTPException(status_code=400, detail="notes must be a string")
         new_values.append(notes)
 
-    # Secret guard BEFORE anything touches disk (validate.py's strict tier).
+    # Secret guard BEFORE anything touches disk. Strict branded-format tier PLUS
+    # the broad labeled/entropy heuristic (B4) — false positives are recoverable
+    # on this human-edit path, so it's worth catching `password: <value>` too.
     for v in new_values:
         kind = secret_scan.looks_like_secret(v)  # type: ignore[no-untyped-call]
+        if not kind:
+            broad = secret_scan.scan(v)  # type: ignore[no-untyped-call]
+            kind = broad[0].get("kind") if broad else None
         if kind:
             raise HTTPException(
                 status_code=422,

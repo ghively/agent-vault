@@ -18,7 +18,7 @@ A **standalone**, file-based household knowledge wiki. It runs as:
   `validate`, `lint`, `review`, `reclassify_apply`, `collections_importer`) —
   those have no console-script entry point.
 - **Service**: `agent-vault-serve` console script — FastAPI HTTP service with
-  28 routes (entities incl. `GET /api/search`, credentials, review, jobs, run
+  32 routes (entities incl. `GET /api/search` + `GET /api/answer`, credentials, review, jobs, run
   history, status/ask, config, settings), not just credential resolution. Full
   reference: [`docs/API.md`](docs/API.md).
 - **UI**: React web interface in `web/` — a window-manager desktop with 8
@@ -73,11 +73,12 @@ invariant, not a technical guarantee.
 
 ## Pipeline + exact CLI signatures
 
-Every stage below lives under `agent_vault/` and is run as `python -m
-agent_vault.<module> <vault-dir>` — **none of these modules have a console-
-script entry point** except `synapse` (→ `agent-vault`) and `serve` (→
-`agent-vault-serve`); `pyproject.toml`'s `[project.scripts]` declares exactly
-those two.
+Every pipeline stage below lives under `agent_vault/` and is run as `python -m
+agent_vault.<module> <vault-dir>` — those pipeline modules have **no** console-
+script entry point. `pyproject.toml`'s `[project.scripts]` declares five:
+`agent-vault` (→ `synapse`), `agent-vault-serve` (→ `serve`), `agent-vault-mcp`
+(→ `mcp_server`, optional `[mcp]` extra), `agent-vault-backup` (→ `backup`), and
+`agent-vault-migrate` (→ `migrate`).
 
 ```
 raw/ (append-only)
@@ -161,16 +162,18 @@ is at **version 2.0** — it now teaches the LLM to emit three new proposal kind
 Changing the prompt/proposal shape requires a version bump so changes are
 audited — bump `PROMPT_CONTRACT_VERSION` in `agent_vault/compiler.py` and
 document the new proposal kind(s) here and in `DOCS.md` §5.
-`AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI); it's the
-only compiler client with test coverage today — `OllamaClient` (the real AI
-path) has none (see `DOCS.md` §8).
+`AGENT_VAULT_COMPILER=mock` is the deterministic offline path (CI). Both clients
+have unit coverage: `MockClient` end-to-end, and `OllamaClient`'s
+parsing/retry/error handling against a mocked HTTP transport
+(`tests/test_ollama_client.py`) — only a *live* Ollama server is (correctly)
+unexercised in CI.
 
 ## Integration boundary (HTTP)
 
 The vault is a **standalone HTTP service** (`agent-vault-serve`). Consumers
 (like SynapseNAS) call it over the network — no file-system or subprocess
 coupling, the boundary is HTTP + JSON. It exposes far more than credential
-resolution: 27 routes across entities, credentials, review, jobs (including
+resolution: 32 routes across entities, credentials, review, jobs (including
 SSE log streaming for running pipeline stages from a browser), run history,
 status/ask, config, and settings. **Full reference: [`docs/API.md`](docs/API.md).**
 The two simplest:

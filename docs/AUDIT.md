@@ -396,8 +396,14 @@ then the read/write interface agents actually need, then operational maturity.
      gates `schema.yaml`'s `version` against `SCHEMA_VERSION` — a newer/older/
      missing version fails loudly with a pointer; `agent-vault-migrate
      check|apply` is the version-walk runner, ready for the first real v2 step).
-10. Backlog: **O3** (mail/folder ingest), **B3** cadence tests, **F8** ESLint/CI,
-    **O9** importers/patterns, doc-drift fixes.
+10. Backlog: ~~**B3** cadence tests~~ ✅ (run_cadence.py end-to-end, offline
+    compiler), ~~**B4** write-side secret gate~~ ✅ (broad labeled/entropy
+    heuristic on the human-edit PATCH/PUT), ~~**B7** job cancellation~~ ✅
+    (`DELETE /api/jobs/{id}`), ~~doc-drift~~ ✅ (OllamaClient coverage claim,
+    route count 27→32, console-scripts list). Still open (deliberately, lower
+    value / larger / content): **B6** rate-limit resolve, durable job registry,
+    **O3** mail/folder ingest, **O9** importers/patterns, **F9** review bulk
+    actions, **F10/F11** cosmetic chrome + completion toast.
 
 _Explicitly out of scope for this system: human-facing reminders/notifications,
 mobile capture, and consumer bill-tracking — Agent Vault is a knowledgebase for

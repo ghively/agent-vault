@@ -450,6 +450,35 @@ async def get_job_status(job_id: str) -> JSONResponse:
     )
 
 
+@router.delete("/jobs/{job_id}")
+async def cancel_job(job_id: str) -> JSONResponse:
+    """Cancel a running job by terminating its subprocess (B7).
+
+    404 if the job is unknown. A job that already finished is returned as-is
+    (idempotent — cancelling a completed job is a no-op, not an error).
+    """
+    registry = get_registry()
+    job = registry.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.status in ("completed", "failed"):
+        return JSONResponse(content={"job_id": job.id, "status": job.status,
+                                     "cancelled": False})
+    proc = job.proc
+    if proc is not None and proc.returncode is None:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass  # already exited between the check and here
+    job.status = "failed"
+    if job.returncode is None:
+        job.returncode = -1
+    job.add_stderr("job cancelled by request")
+    return JSONResponse(content={"job_id": job.id, "status": job.status,
+                                 "cancelled": True})
+
+
 @router.get("/jobs/{job_id}/stream")
 async def stream_job(job_id: str, request: Request) -> SSEEventSourceResponse:
     """Stream job progress via Server-Sent Events (SSE).

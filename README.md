@@ -78,7 +78,7 @@ agent-vault-serve          # starts the FastAPI service
 #   VAULT_TOKEN (optional bearer token for auth)
 ```
 
-The service exposes 27 routes across entities, credentials, review, jobs,
+The service exposes 32 routes across entities, credentials, review, jobs,
 run history, status/ask, config, and settings — see [`docs/API.md`](./docs/API.md)
 for the full reference, including the SSE job-streaming mechanism the web UI uses to run
 pipeline stages from the browser. `/api/health` (liveness) and
