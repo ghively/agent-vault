@@ -1,5 +1,6 @@
 import React, { useState, KeyboardEvent } from "react";
 import { useAsk, useStatus } from "../api/hooks";
+import { apiHost } from "../api/client";
 import { C, FONT_UI, FONT_MONO } from "../theme";
 import type { AskResponse } from "../api/types";
 
@@ -103,7 +104,11 @@ export function CommandDeck() {
   const [activeQuery, setActiveQuery] = useState("");
 
   const { data: askData, isError, isLoading } = useAsk(activeQuery);
-  const { data: statusData } = useStatus();
+  const { data: statusData, isError: statusError } = useStatus();
+
+  // Real endpoint indicator: the host we actually talk to (VAULT_API_URL, or
+  // the page's own origin for same-origin deployments) + live reachability.
+  const endpointHost = apiHost();
 
   function handleKey(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && query.trim()) {
@@ -127,8 +132,12 @@ export function CommandDeck() {
         padding: "10px 16px", paddingBottom: 10,
       }}>
         <span style={{ color: C.green, textShadow: `0 0 5px ${C.green}` }}>synapse-deck</span>
-        <span style={{ color: "var(--ns-bright)", border: "1px solid rgba(39,201,63,0.5)", padding: "0 7px" }}>
-          ● localhost:7777
+        <span style={{
+          color: statusError ? C.red : "var(--ns-bright)",
+          border: `1px solid ${statusError ? "rgba(255,95,86,0.5)" : "rgba(39,201,63,0.5)"}`,
+          padding: "0 7px",
+        }}>
+          {statusError ? "○" : "●"} {endpointHost || "same-origin"}
         </span>
         <span style={{ marginLeft: "auto" }}>standalone query service</span>
       </div>

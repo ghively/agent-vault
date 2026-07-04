@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEntities, useEntity } from "../api/hooks";
-import { recompileEntity, useJobStream } from "../api/jobs";
+import { recompileEntity } from "../api/jobs";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { EntityRow, FactRow, LinkRow } from "../api/types";
 
@@ -311,20 +311,33 @@ const TAG_STYLE: React.CSSProperties = {
 export function Wiki() {
   const [detailSlug, setDetailSlug] = useState("");
   const [wikiQuery, setWikiQuery] = useState("");
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [recompiling, setRecompiling] = useState(false);
+  const [recompileSummary, setRecompileSummary] = useState<Record<string, unknown> | null>(null);
+  const [recompileError, setRecompileError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const { data: detail, isLoading } = useEntity(detailSlug);
-  const job = useJobStream(jobId);
 
-  // When job completes, invalidate entity cache so the page refreshes.
-  React.useEffect(() => {
-    if (job.state === "done" && detailSlug) {
+  // POST /api/entities/{slug}/recompile is SYNCHRONOUS: the response IS the
+  // compile summary, so completion of the fetch is completion of the work.
+  async function handleRecompile() {
+    if (!detailSlug || recompiling) return;
+    if (!window.confirm("Recompile this entity with the LLM?")) return;
+    setRecompiling(true);
+    setRecompileSummary(null);
+    setRecompileError(null);
+    try {
+      const summary = await recompileEntity(detailSlug);
+      setRecompileSummary(summary);
       queryClient.invalidateQueries({ queryKey: ["entity", detailSlug] });
       queryClient.invalidateQueries({ queryKey: ["entities"] });
       queryClient.invalidateQueries({ queryKey: ["status"] });
+    } catch (e) {
+      setRecompileError(e instanceof Error ? e.message : "recompile failed");
+    } finally {
+      setRecompiling(false);
     }
-  }, [job.state, detailSlug, queryClient]);
+  }
 
   return (
     <div
@@ -515,7 +528,6 @@ export function Wiki() {
                           justifyContent: "space-between",
                           gap: 8,
                           padding: "8px 0",
-                          cursor: "pointer",
                           borderRadius: 6,
                         }}
                       >
@@ -529,7 +541,7 @@ export function Wiki() {
                           {name}
                         </span>
                         <span style={{ color: "#5f7f5f", fontSize: 11 }}>
-                          {dir} ↗
+                          {dir}
                         </span>
                       </div>
                     );
@@ -544,13 +556,10 @@ export function Wiki() {
                 {/* action buttons */}
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button
-                    onClick={async () => {
-                      if (!window.confirm("Recompile this entity with the LLM?")) return;
-                      const id = await recompileEntity(detailSlug);
-                      setJobId(id);
-                    }}
+                    onClick={handleRecompile}
+                    disabled={recompiling}
                     style={{
-                      cursor: "pointer",
+                      cursor: recompiling ? "wait" : "pointer",
                       fontSize: 12,
                       padding: "6px 14px",
                       borderRadius: 7,
@@ -558,13 +567,14 @@ export function Wiki() {
                       background: "rgba(0,243,255,0.08)",
                       color: C.cyan,
                       fontFamily: FONT_MONO,
+                      opacity: recompiling ? 0.55 : 1,
                     }}
                   >
-                    Recompile
+                    {recompiling ? "Recompiling…" : "Recompile"}
                   </button>
                   <button
                     disabled
-                    title="enabled in a later milestone"
+                    title="not implemented yet"
                     style={{
                       fontSize: 12,
                       padding: "6px 14px",
@@ -581,7 +591,7 @@ export function Wiki() {
                   </button>
                   <button
                     disabled
-                    title="enabled in a later milestone"
+                    title="not implemented yet"
                     style={{
                       fontSize: 12,
                       padding: "6px 14px",
@@ -598,8 +608,23 @@ export function Wiki() {
                   </button>
                 </div>
 
-                {/* recompile job stream panel */}
-                {jobId && (
+                {/* recompile result panel */}
+                {recompileError && (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      borderRadius: 9,
+                      border: "1px solid rgba(255,95,86,0.4)",
+                      background: "rgba(24,0,0,0.45)",
+                      padding: "12px 14px",
+                      color: C.red,
+                      fontSize: 12,
+                    }}
+                  >
+                    recompile failed — {recompileError}
+                  </div>
+                )}
+                {recompileSummary && (
                   <div
                     style={{
                       marginTop: 16,
@@ -611,7 +636,7 @@ export function Wiki() {
                   >
                     <div
                       style={{
-                        color: C.cyan,
+                        color: C.greenSoft,
                         fontSize: 11,
                         fontWeight: 700,
                         letterSpacing: 1,
@@ -619,24 +644,22 @@ export function Wiki() {
                         marginBottom: 8,
                       }}
                     >
-                      Recompile · {job.state ?? "running"}
+                      Recompile complete
                     </div>
-                    <div
+                    <pre
                       style={{
                         fontFamily: FONT_MONO,
                         fontSize: 11.5,
                         color: C.dim,
                         maxHeight: 160,
                         overflow: "auto",
+                        margin: 0,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
                       }}
                     >
-                      {job.lines.map((line, i) => (
-                        <div key={i}>{line}</div>
-                      ))}
-                      {job.lines.length === 0 && (
-                        <div style={{ color: "#5f7f5f" }}>waiting…</div>
-                      )}
-                    </div>
+                      {JSON.stringify(recompileSummary, null, 2)}
+                    </pre>
                   </div>
                 )}
               </div>

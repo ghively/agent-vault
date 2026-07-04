@@ -5,6 +5,31 @@ import { useAuth } from "../store/auth";
 // VITE_VAULT_API_URL only for dev against a separate backend.
 const VAULT_API_URL = import.meta.env.VITE_VAULT_API_URL ?? "";
 
+/**
+ * Resolve an API path against VAULT_API_URL so remote-API deployments work.
+ * Every fetch that bypasses vaultFetch (SSE streams, TokenGate's health probe)
+ * must build its URL with this instead of using a bare relative path.
+ */
+export function apiUrl(path: string): string {
+  return path.startsWith("/api") ? `${VAULT_API_URL}${path}` : `${VAULT_API_URL}/api${path}`;
+}
+
+/**
+ * Host the API is served from, for display purposes (e.g. the Command Deck
+ * endpoint pill). Falls back to the page's own host when VAULT_API_URL is
+ * unset (same-origin deployment).
+ */
+export function apiHost(): string {
+  if (VAULT_API_URL) {
+    try {
+      return new URL(VAULT_API_URL).host;
+    } catch {
+      return VAULT_API_URL;
+    }
+  }
+  return typeof window !== "undefined" ? window.location.host : "";
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -26,7 +51,7 @@ async function errorMessage(res: Response): Promise<string> {
 
 export async function vaultFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = useAuth.getState().token;
-  const url = path.startsWith("/api") ? `${VAULT_API_URL}${path}` : `${VAULT_API_URL}/api${path}`;
+  const url = apiUrl(path);
   let res: Response;
   try {
     res = await fetch(url, {

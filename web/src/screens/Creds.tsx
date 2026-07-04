@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useCreds } from "../api/hooks";
 import { resolveSecret } from "../api/resolve";
 import { C, FONT_MONO } from "../theme";
@@ -29,10 +29,10 @@ export function Creds() {
     setResolveState(null);
   };
 
-  const handleReveal = async (slug: string, token: string) => {
+  const handleReveal = async (slug: string) => {
     setResolveState({ slug, secret: null, error: null, loading: true });
     try {
-      const secret = await resolveSecret(slug, token);
+      const secret = await resolveSecret(slug);
       setResolveState({ slug, secret, error: null, loading: false });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
@@ -153,27 +153,7 @@ export function Creds() {
         )}
       </div>
 
-      {/* Resolve-output panel */}
-      <div style={{
-        marginTop: 18,
-        border: `1px solid rgba(0,243,255,0.3)`,
-        background: "rgba(0,0,0,0.5)",
-        padding: "13px 15px",
-        fontSize: 12.5,
-        lineHeight: 1.85,
-        color: C.dim,
-      }}>
-        <div style={{ color: C.purple, fontSize: 12, letterSpacing: 1, marginBottom: 8, textShadow: `0 0 6px ${C.purple}` }}>
-          &gt; synapse resolve bofa-checking
-        </div>
-        <div style={{ color: "var(--ns-dim2)" }}># Bank of America &lt;- age://banking/bofa-login</div>
-        <div style={{ color: "var(--ns-dim2)" }}># secret below; never stored — handle with care · stderr context, stdout secret</div>
-        <div style={{ color: C.greenSoft, textShadow: "0 0 6px rgba(39,201,63,0.4)" }}>
-          (run resolve to reveal)
-        </div>
-      </div>
-
-      {/* Re-auth modal */}
+      {/* Resolve confirmation modal */}
       {modalSlug && (
         <ResolveModal
           slug={modalSlug}
@@ -189,19 +169,24 @@ export function Creds() {
 interface ResolveModalProps {
   slug: string;
   state: ResolveState | null;
-  onReveal: (slug: string, token: string) => Promise<void>;
+  onReveal: (slug: string) => Promise<void>;
   onClose: () => void;
 }
 
 function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
-  const [token, setToken] = useState("");
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
-  const handleConfirm = async () => {
-    const t = token;
-    setToken(""); // clear token immediately — not stored
-    await onReveal(slug, t);
-  };
+  // Escape closes (and clears any revealed secret); focus the confirm button
+  // when the dialog opens.
+  useEffect(() => {
+    confirmRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const handleCopy = async () => {
     if (!state?.secret) return;
@@ -218,6 +203,7 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
     <div
       role="dialog"
       aria-modal="true"
+      aria-label={`Resolve secret for ${slug}`}
       style={{
         position: "fixed",
         inset: 0,
@@ -234,48 +220,22 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
         borderRadius: 8,
         padding: "24px 28px",
         minWidth: 380,
+        maxWidth: 520,
         fontFamily: FONT_MONO,
         color: C.text,
         fontSize: 13,
       }}>
-        <div style={{ color: C.amber, marginBottom: 14, fontSize: 12, display: "flex", gap: 8 }}>
-          <span>⚠</span>
-          <span>The secret will be shown once and is never stored. Close this dialog to clear it.</span>
-        </div>
-
         {!state?.secret && (
           <>
-            <label
-              htmlFor="resolve-token"
-              style={{ display: "block", color: C.dim, fontSize: 11, marginBottom: 6, letterSpacing: 1 }}
-            >
-              Access Token
-            </label>
-            <input
-              id="resolve-token"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="re-enter your access token"
-              autoComplete="off"
-              data-1p-ignore="true"
-              data-lpignore="true"
-              data-bwignore="true"
-              data-form-type="other"
-              style={{
-                width: "100%",
-                background: "rgba(0,0,0,0.6)",
-                border: `1px solid ${C.purple}`,
-                borderRadius: 4,
-                color: C.text,
-                fontFamily: FONT_MONO,
-                fontSize: 12,
-                padding: "6px 10px",
-                outline: "none",
-                boxSizing: "border-box",
-                marginBottom: 16,
-              }}
-            />
+            <div style={{ color: C.amber, marginBottom: 14, fontSize: 12, display: "flex", gap: 8 }}>
+              <span>⚠</span>
+              <span>
+                The plaintext secret for <span style={{ color: C.cyan }}>{slug}</span> will be
+                fetched from its external store and displayed on this screen. Anyone who can see
+                your display will be able to read it. It is shown once and never stored — close
+                the dialog to clear it.
+              </span>
+            </div>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button
@@ -294,8 +254,9 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
                 Cancel
               </button>
               <button
-                onClick={handleConfirm}
-                disabled={!token || state?.loading === true}
+                ref={confirmRef}
+                onClick={() => onReveal(slug)}
+                disabled={state?.loading === true}
                 style={{
                   padding: "6px 16px",
                   borderRadius: 5,
@@ -304,10 +265,10 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
                   color: C.cyan,
                   fontFamily: FONT_MONO,
                   fontSize: 12,
-                  cursor: "pointer",
+                  cursor: state?.loading ? "wait" : "pointer",
                 }}
               >
-                {state?.loading ? "Resolving..." : "Reveal"}
+                {state?.loading ? "Resolving..." : "Reveal secret"}
               </button>
             </div>
 
@@ -321,6 +282,10 @@ function ResolveModal({ slug, state, onReveal, onClose }: ResolveModalProps) {
 
         {state?.secret && (
           <>
+            <div style={{ color: C.amber, marginBottom: 14, fontSize: 12, display: "flex", gap: 8 }}>
+              <span>⚠</span>
+              <span>Shown once, never stored. Close this dialog to clear it.</span>
+            </div>
             <div style={{ color: C.greenSoft, fontFamily: FONT_MONO, fontSize: 14, marginBottom: 14, wordBreak: "break-all" }}>
               {state.secret}
             </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useWindows, focusedApp } from "../store/windows";
+import { useWindows } from "../store/windows";
 import { APPS, type AppId } from "./apps";
 import { clampResize, snapFor } from "./geometry";
 import { ScreenRouter } from "../screens/ScreenRouter";
@@ -10,43 +10,53 @@ interface WindowProps {
   deskRef: React.RefObject<HTMLDivElement>;
 }
 
+// Keep at least this many px of a window visible when dragging it toward a
+// horizontal edge, so it can always be grabbed back.
+const EDGE_MARGIN = 40;
+
 export function Window({ app, deskRef }: WindowProps) {
-  // Atomic selectors — each subscribes only to its own slice so other
-  // windows dragging do not trigger a re-render of this component.
-  const pos = useWindows((s) => s.pos);
-  const size = useWindows((s) => s.size);
+  // Per-window selectors — subscribe only to THIS window's slice so dragging
+  // one window does not re-render every other window.
+  const p = useWindows((s) => s.pos[app]) ?? { x: 60, y: 40 };
+  const rawSize = useWindows((s) => s.size[app]);
   const zVal = useWindows((s) => s.z[app] ?? 1);
   const zTop = useWindows((s) => s.zTop);
+  const isMinimized = useWindows((s) => !!s.minimized[app]);
   const focus = useWindows((s) => s.focus);
   const close = useWindows((s) => s.close);
+  const minimize = useWindows((s) => s.minimize);
   const setPos = useWindows((s) => s.setPos);
   const setSize = useWindows((s) => s.setSize);
-  const focused = useWindows(focusedApp);
 
-  const p = pos[app] ?? { x: 60, y: 40 };
-  // Derive size inline to avoid creating new object references in a selector
-  const rawSize = size[app];
   const s = rawSize ?? { w: APPS[app].w, h: APPS[app].h };
   const isTop = zVal === zTop;
 
   // drag state (refs to avoid re-renders during mousemove)
-  const dragRef = useRef<{ dx: number; dy: number; left: number; top: number } | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizeRef = useRef<{ dir: string; sx: number; sy: number; w0: number; h0: number; x0: number; y0: number } | null>(null);
   const restoredRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const [snapping, setSnapping] = useState(false);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
+      // Desktop.tsx applies `zoom: desktopScale` — pointer coordinates are in
+      // visual px while window pos/size are in layout px, so divide by scale.
+      const scale = useWindows.getState().desktopScale || 1;
       if (dragRef.current) {
-        const { dx, dy, left, top } = dragRef.current;
+        const { dx, dy } = dragRef.current;
         const rect = deskRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-        const x = e.clientX - rect.left - dx;
-        const y = Math.max(0, e.clientY - rect.top - dy);
+        const st = useWindows.getState();
+        const w = st.size[app]?.w ?? APPS[app].w;
+        const deskW = deskRef.current?.clientWidth ?? 1280;
+        let x = (e.clientX - rect.left) / scale - dx;
+        // Clamp so at least EDGE_MARGIN px stay visible on each side.
+        x = Math.max(-(w - EDGE_MARGIN), Math.min(x, deskW - EDGE_MARGIN));
+        const y = Math.max(0, (e.clientY - rect.top) / scale - dy);
         setPos(app, x, y);
       } else if (resizeRef.current) {
         const { dir, sx, sy, w0, h0, x0, y0 } = resizeRef.current;
-        const ddx = e.clientX - sx;
-        const ddy = e.clientY - sy;
+        const ddx = (e.clientX - sx) / scale;
+        const ddy = (e.clientY - sy) / scale;
         const result = clampResize(dir, ddx, ddy, w0, h0, x0, y0);
         setPos(app, result.x, result.y);
         setSize(app, result.w, result.h);
@@ -68,8 +78,12 @@ export function Window({ app, deskRef }: WindowProps) {
 
   const onDragStart = (e: React.MouseEvent) => {
     focus(app);
+    const scale = useWindows.getState().desktopScale || 1;
     const rect = deskRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-    dragRef.current = { dx: e.clientX - rect.left - p.x, dy: e.clientY - rect.top - p.y, left: rect.left, top: rect.top };
+    dragRef.current = {
+      dx: (e.clientX - rect.left) / scale - p.x,
+      dy: (e.clientY - rect.top) / scale - p.y,
+    };
     e.preventDefault();
   };
 
@@ -107,8 +121,18 @@ export function Window({ app, deskRef }: WindowProps) {
     close(app);
   };
 
+  const onMinimize = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    minimize(app);
+  };
+
   const a = APPS[app];
   const borderColor = isTop ? "rgba(0,255,0,0.5)" : "rgba(0,255,0,0.18)";
+
+  // Minimized windows stay mounted in the store but render nothing; the
+  // Waybar task button restores them via focus().
+  if (isMinimized) return null;
 
   return (
     <div
@@ -156,7 +180,16 @@ export function Window({ app, deskRef }: WindowProps) {
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClose(e); }}
             style={{ width: 12, height: 12, borderRadius: "50%", background: "#ff5f56", boxShadow: "0 0 5px #ff5f56", cursor: "pointer", flexShrink: 0 }}
           />
-          <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#ffbd2e", boxShadow: "0 0 5px #ffbd2e", flexShrink: 0 }} />
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={`Minimize ${a.title}`}
+            title="minimize"
+            onMouseDown={(e) => { e.stopPropagation(); }}
+            onClick={onMinimize}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onMinimize(e); }}
+            style={{ width: 12, height: 12, borderRadius: "50%", background: "#ffbd2e", boxShadow: "0 0 5px #ffbd2e", cursor: "pointer", flexShrink: 0 }}
+          />
           <span
             role="button"
             tabIndex={0}

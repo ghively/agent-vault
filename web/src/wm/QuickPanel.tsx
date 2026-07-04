@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useWindows, SCALE_MIN, SCALE_MAX } from "../store/windows";
 import { useConfig, useStatus } from "../api/hooks";
 import { useApplyConfig } from "../api/mutations";
-import { useT } from "../i18n";
-import i18n from "i18next";
 
 export function QuickPanel() {
   const togglePanel = useWindows((s) => s.togglePanel);
@@ -14,14 +12,20 @@ export function QuickPanel() {
   const setTheme = useWindows((s) => s.setTheme);
   const density = useWindows((s) => s.density);
   const setDensity = useWindows((s) => s.setDensity);
-  const locale = useWindows((s) => s.locale);
-  const setLocale = useWindows((s) => s.setLocale);
   const config = useConfig();
   const status = useStatus();
   const applyConfig = useApplyConfig();
 
   const entities = status.data?.counts?.total ?? 0;
   const types = Object.keys(status.data?.breakdown ?? {}).length;
+
+  // Live vault reachability, derived from the /api/status query state — not a
+  // hardcoded "ONLINE" badge.
+  const vaultState = status.isError
+    ? { label: "● OFFLINE", color: "#ff5f56" }
+    : status.data
+      ? { label: "● ONLINE", color: "#27c93f" }
+      : { label: "○ CHECKING", color: "#888" };
 
   // Local editable state — synced from config once loaded
   const [compiler, setCompilerState] = useState<string>(
@@ -33,17 +37,25 @@ export function QuickPanel() {
   const [maxRawMb, setMaxRawMbState] = useState<number>(
     Number(config.data?.env?.AGENT_VAULT_MAX_RAW_MB ?? "50")
   );
+  // Last values committed to the server — lets keyboard commit handlers
+  // (onBlur/onKeyUp) fire freely without posting duplicate patches.
+  const committed = useRef<{ perSource: number; maxRawMb: number }>({
+    perSource: 4000,
+    maxRawMb: 50,
+  });
 
   useEffect(() => {
     if (!config.data) return;
     const env = config.data.env ?? {};
     setCompilerState(env.AGENT_VAULT_COMPILER ?? "mock");
-    setPerSourceState(Number(env.AGENT_VAULT_PER_SOURCE_CHARS ?? "4000"));
-    setMaxRawMbState(Number(env.AGENT_VAULT_MAX_RAW_MB ?? "50"));
+    const per = Number(env.AGENT_VAULT_PER_SOURCE_CHARS ?? "4000");
+    const raw = Number(env.AGENT_VAULT_MAX_RAW_MB ?? "50");
+    setPerSourceState(per);
+    setMaxRawMbState(raw);
+    committed.current = { perSource: per, maxRawMb: raw };
   }, [config.data]);
 
-  // Resolvers used as cadence display
-  const cadences = config.data?.resolvers ?? [];
+  const resolvers = config.data?.resolvers ?? [];
 
   function applyEnvPatch(patch: Record<string, string>) {
     if (!config.data?.env) return; // still guard pre-load
@@ -51,16 +63,21 @@ export function QuickPanel() {
   }
 
   function handleCompilerToggle(opt: string) {
+    if (opt === compiler) return;
     setCompilerState(opt);
     applyEnvPatch({ AGENT_VAULT_COMPILER: opt });
   }
 
-  function handlePerSourceCommit(v: number) {
+  function commitPerSource(v: number) {
+    if (v === committed.current.perSource) return;
+    committed.current.perSource = v;
     setPerSourceState(v);
     applyEnvPatch({ AGENT_VAULT_PER_SOURCE_CHARS: String(v) });
   }
 
-  function handleMaxRawMbCommit(v: number) {
+  function commitMaxRawMb(v: number) {
+    if (v === committed.current.maxRawMb) return;
+    committed.current.maxRawMb = v;
     setMaxRawMbState(v);
     applyEnvPatch({ AGENT_VAULT_MAX_RAW_MB: String(v) });
   }
@@ -98,8 +115,8 @@ export function QuickPanel() {
           <div style={{ color: "#666", fontSize: 11 }}>uptime — · schema v1</div>
         </div>
         <div style={{ display: "flex", gap: 8, color: "#888", fontSize: 14 }}>
-          <span style={{ cursor: "default" }} title="enabled in a later milestone">⏻</span>
-          <span style={{ cursor: "default" }} title="enabled in a later milestone">⟲</span>
+          <span style={{ cursor: "default" }} title="not implemented yet">⏻</span>
+          <span style={{ cursor: "default" }} title="not implemented yet">⟲</span>
           <span style={{ cursor: "pointer" }} onClick={togglePanel}>⏷</span>
         </div>
       </div>
@@ -111,14 +128,16 @@ export function QuickPanel() {
           borderRadius: 8, padding: "8px 10px",
         }}>
           <div style={{ color: "#666", fontSize: 9, letterSpacing: 1 }}>VAULT</div>
-          <div style={{ color: "#27c93f", fontSize: 12 }}>● ONLINE</div>
+          <div style={{ color: vaultState.color, fontSize: 12 }}>{vaultState.label}</div>
         </div>
         <div style={{
           flex: 1, border: "1px solid rgba(0,255,0,0.2)", background: "rgba(0,0,0,0.4)",
           borderRadius: 8, padding: "8px 10px",
         }}>
           <div style={{ color: "#666", fontSize: 9, letterSpacing: 1 }}>ENTITIES</div>
-          <div style={{ color: "#ccffcc", fontSize: 12 }}>{entities} · {types} types</div>
+          <div style={{ color: "#ccffcc", fontSize: 12 }}>
+            {status.data ? `${entities} · ${types} types` : "—"}
+          </div>
         </div>
       </div>
 
@@ -198,33 +217,6 @@ export function QuickPanel() {
         </div>
       </div>
 
-      {/* locale selector */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ color: "#888", fontSize: 11, marginBottom: 6, letterSpacing: 1 }}>LOCALE</div>
-        <div style={{ display: "flex", gap: 7 }}>
-          {(["en"] as const).map((loc) => {
-            const active = locale === loc;
-            return (
-              <span
-                key={loc}
-                onClick={() => {
-                  setLocale(loc);
-                  i18n.changeLanguage(loc);
-                }}
-                style={{
-                  flex: 1, textAlign: "center", padding: 7, borderRadius: 8, fontSize: 12, cursor: "pointer",
-                  border: `1px solid ${active ? "rgba(0,255,0,0.6)" : "rgba(0,255,0,0.18)"}`,
-                  color: active ? "#00ff00" : "#555",
-                  background: active ? "rgba(0,255,0,0.12)" : "rgba(0,0,0,0.3)",
-                }}
-              >
-                {loc.toUpperCase()}
-              </span>
-            );
-          })}
-        </div>
-      </div>
-
       {/* compiler toggle */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ color: "#888", fontSize: 11, marginBottom: 6, letterSpacing: 1 }}>COMPILE BACKEND</div>
@@ -260,9 +252,12 @@ export function QuickPanel() {
           value={perSource}
           className="gv-rng"
           style={{ width: "100%" }}
+          aria-label="source budget"
           onChange={(e) => setPerSourceState(Number(e.target.value))}
-          onMouseUp={(e) => handlePerSourceCommit(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={(e) => handlePerSourceCommit(Number((e.target as HTMLInputElement).value))}
+          onMouseUp={(e) => commitPerSource(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => commitPerSource(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => commitPerSource(Number((e.target as HTMLInputElement).value))}
+          onBlur={(e) => commitPerSource(Number(e.target.value))}
         />
       </div>
 
@@ -277,60 +272,32 @@ export function QuickPanel() {
           value={maxRawMb}
           className="gv-rng"
           style={{ width: "100%" }}
+          aria-label="max raw MB"
           onChange={(e) => setMaxRawMbState(Number(e.target.value))}
-          onMouseUp={(e) => handleMaxRawMbCommit(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={(e) => handleMaxRawMbCommit(Number((e.target as HTMLInputElement).value))}
+          onMouseUp={(e) => commitMaxRawMb(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => commitMaxRawMb(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => commitMaxRawMb(Number((e.target as HTMLInputElement).value))}
+          onBlur={(e) => commitMaxRawMb(Number(e.target.value))}
         />
       </div>
 
-      {/* cadence toggles — display-only (resolvers are configured via resolvers.yaml) */}
-      <div style={{ color: "#888", fontSize: 11, marginBottom: 7, letterSpacing: 1 }}>CADENCES</div>
+      {applyConfig.isError && (
+        <div style={{ color: "#ff5f56", fontSize: 11, marginBottom: 10 }}>
+          config apply failed: {applyConfig.error instanceof Error ? applyConfig.error.message : "unknown error"}
+        </div>
+      )}
+
+      {/* resolver backends — display-only (configured via resolvers.yaml) */}
+      <div style={{ color: "#888", fontSize: 11, marginBottom: 7, letterSpacing: 1 }}>RESOLVERS</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 14 }}>
-        {cadences.length === 0 ? (
+        {resolvers.length === 0 ? (
           <div style={{ color: "#444", fontSize: 11 }}>no resolvers configured</div>
-        ) : cadences.map((c, i) => (
+        ) : resolvers.map((r, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                cursor: "default", width: 36, height: 19, borderRadius: 10,
-                border: "1px solid rgba(0,255,0,0.2)", background: "rgba(0,0,0,0.4)",
-                position: "relative", flex: "none",
-              }}
-            >
-              <span style={{
-                position: "absolute", top: 1, left: 2, width: 15, height: 15,
-                borderRadius: "50%", background: "#444",
-              }} />
-            </span>
-            <span style={{ color: "#ccffcc", fontSize: 12, flex: 1 }}>{c.name}</span>
-            <span style={{ color: "#555", fontSize: 10 }}>{c.detail}</span>
+            <span style={{ color: "#ccffcc", fontSize: 12, flex: 1 }}>{r.name}</span>
+            <span style={{ color: "#555", fontSize: 10 }}>{r.detail}</span>
           </div>
         ))}
-      </div>
-
-      {/* current job card */}
-      <div style={{
-        border: "1px solid rgba(128,0,255,0.4)", background: "rgba(8,0,14,0.5)",
-        borderRadius: 10, padding: "11px 13px", marginBottom: 12,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{
-            width: 34, height: 34, borderRadius: 8, background: "rgba(0,243,255,0.12)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#00f3ff", fontSize: 16,
-          }}>▸</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: "#ccffcc", fontSize: 12 }}>weekly.sh — compile</div>
-            <div style={{ color: "#666", fontSize: 10 }}>no job running</div>
-          </div>
-          <span style={{ color: "#27c93f", fontSize: 11 }}>—</span>
-        </div>
-        <div style={{ height: 5, borderRadius: 3, background: "rgba(0,0,0,0.5)", marginTop: 9, position: "relative", overflow: "hidden" }}>
-          <span style={{
-            position: "absolute", left: 0, top: 0, bottom: 0, width: "0%",
-            background: "linear-gradient(90deg,#00f3ff,#8000ff)",
-          }} />
-        </div>
       </div>
 
       {/* open settings */}

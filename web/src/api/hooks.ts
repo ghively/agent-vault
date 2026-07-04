@@ -12,6 +12,9 @@ export const useEntities = (q = "", type = "") =>
   useQuery({
     queryKey: ["entities", q, type],
     queryFn: () => vaultFetch<EntitiesResponse>(`/api/entities?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
+    // Keep showing the previous page of results while a new query/filter
+    // fetches — stops the table flickering to "loading…" on every keystroke.
+    placeholderData: (prev: EntitiesResponse | undefined) => prev,
   });
 
 export const useEntity = (slug: string) =>

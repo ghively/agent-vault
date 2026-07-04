@@ -1,6 +1,6 @@
 // web/src/wm/apps.ts
 // App registry for Agent Vault PHOSPHOR shell.
-// Ported from SynapseNAS, stripped to the 7 vault apps.
+// Ported from SynapseNAS, stripped to the 8 vault apps.
 
 export type AppId =
   | "browse"

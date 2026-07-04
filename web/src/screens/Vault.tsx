@@ -1,6 +1,6 @@
 // web/src/screens/Vault.tsx
-// Agent Vault hub — orients the user and lets them open the four vault sub-apps
-// (Status, Browse, Wiki, Pipeline, Review, Credentials, Command Deck, Settings)
+// Agent Vault hub — orients the user and lets them open the vault sub-apps
+// (Browse, Wiki, Pipeline, Review, Credentials, Command Deck, Settings)
 // using the existing nav pattern.
 
 import React from "react";
@@ -60,6 +60,13 @@ const TILES: HubTile[] = [
     desc: "query the vault with natural language",
     color: "#4d9bff",
   },
+  {
+    id: "settings",
+    glyph: "⚙",
+    name: "SETTINGS",
+    desc: "vault config & preferences",
+    color: "#8a7dff",
+  },
 ];
 
 // ── AppTile ───────────────────────────────────────────────────────────────────
@@ -82,11 +89,13 @@ function AppTile({ tile, onOpen }: { tile: HubTile; onOpen: (id: string) => void
         borderRadius: 11,
         overflow: "hidden",
         border: `1px solid ${hovered ? tile.color : "rgba(255,255,255,0.09)"}`,
+        // color-mix works with both literal hex and var(--…) tokens — the old
+        // hexToRgb() helper produced rgba(NaN,…) for CSS-variable colors.
         background: hovered
-          ? `rgba(${hexToRgb(tile.color)},0.08)`
+          ? `color-mix(in srgb, ${tile.color} 8%, transparent)`
           : "rgba(255,255,255,0.022)",
         transition: "all 0.15s cubic-bezier(0.25,1,0.5,1)",
-        boxShadow: hovered ? `0 0 12px rgba(${hexToRgb(tile.color)},0.25)` : "none",
+        boxShadow: hovered ? `0 0 12px color-mix(in srgb, ${tile.color} 25%, transparent)` : "none",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -143,16 +152,6 @@ function AppTile({ tile, onOpen }: { tile: HubTile; onOpen: (id: string) => void
       </div>
     </div>
   );
-}
-
-// Convert a hex colour like "var(--ns-cyan)" to "0,243,255" for rgba() use.
-function hexToRgb(hex: string): string {
-  const clean = hex.replace(/^#/, "");
-  const n = parseInt(clean.length === 3
-    ? clean.split("").map((c) => c + c).join("")
-    : clean, 16);
-  // eslint-disable-next-line no-bitwise
-  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
 
 // ── Vault hub screen ──────────────────────────────────────────────────────────

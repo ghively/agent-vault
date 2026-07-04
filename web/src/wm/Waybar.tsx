@@ -3,8 +3,6 @@ import { useWindows, focusedApp } from "../store/windows";
 import { APPS } from "./apps";
 import { useReviewProposals, useReviewEntities, useConfig } from "../api/hooks";
 
-const CPU_BARS = ["7px", "12px", "9px", "15px", "11px", "6px", "13px"];
-
 function now() {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
@@ -18,6 +16,7 @@ export function Waybar() {
   const toggleLauncher = useWindows((s) => s.toggleLauncher);
   const togglePanel = useWindows((s) => s.togglePanel);
   const openApp = useWindows((s) => s.openApp);
+  const minimized = useWindows((s) => s.minimized);
   const focused = useWindows(focusedApp);
 
   const proposals = useReviewProposals();
@@ -38,10 +37,12 @@ export function Waybar() {
   const switcher = open.map((id) => {
     const a = APPS[id];
     const isOn = id === focused;
+    const isMin = !!minimized[id];
     return {
       id,
       glyph: a.glyph,
       name: a.name,
+      isMin,
       bg: isOn ? "rgba(0,255,0,0.16)" : "rgba(0,0,0,0.25)",
       border: isOn ? "rgba(0,255,0,0.4)" : "transparent",
       color: isOn ? "#00ff00" : "#aaa",
@@ -86,14 +87,16 @@ export function Waybar() {
             key={w.id}
             role="button"
             tabIndex={0}
-            aria-label={`Focus ${w.name}`}
+            aria-label={w.isMin ? `Restore ${w.name}` : `Focus ${w.name}`}
             onClick={() => focus(w.id)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focus(w.id); } }}
             className="gv-pill"
+            title={w.isMin ? "restore window" : undefined}
             style={{
               cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
               padding: "4px 10px", borderRadius: 7,
               background: w.bg, border: `1px solid ${w.border}`, color: w.color,
+              opacity: w.isMin ? 0.55 : 1,
             }}
           >
             <span style={{ fontFamily: "'Space Grotesk',system-ui,sans-serif", fontWeight: 700, letterSpacing: -0.5, fontSize: 14 }}>
@@ -114,17 +117,6 @@ export function Waybar() {
 
       {/* right modules */}
       <div style={{ display: "flex", alignItems: "center", gap: 7, flex: "none" }}>
-        {/* CPU mini-bars */}
-        <span className="gv-pill" style={{
-          display: "flex", alignItems: "flex-end", gap: 2, padding: "6px 9px",
-          borderRadius: 7, background: "rgba(0,0,0,0.3)", height: 26,
-        }}>
-          {CPU_BARS.map((h, i) => (
-            <span key={i} style={{ width: 3, height: h, background: "#00ff00", boxShadow: "0 0 3px rgba(0,255,0,0.6)", display: "block" }} />
-          ))}
-          <span style={{ color: "#888", fontSize: 10, marginLeft: 4 }}>CPU</span>
-        </span>
-
         {/* review counter */}
         <span className="gv-pill" style={{ padding: "5px 10px", borderRadius: 7, background: "rgba(0,243,255,0.12)", color: "#00f3ff" }}>
           ◈ {reviewCount}
@@ -137,7 +129,11 @@ export function Waybar() {
 
         {/* compiler pill */}
         <span
+          role="button"
+          tabIndex={0}
+          aria-label="Open vault hub (compiler settings)"
           onClick={() => openApp("vault")}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openApp("vault"); } }}
           className="gv-pill"
           style={{ cursor: "pointer", padding: "5px 10px", borderRadius: 7, background: "rgba(128,0,255,0.16)", color: "#b266ff" }}
         >
@@ -146,7 +142,11 @@ export function Waybar() {
 
         {/* AI Assistant button */}
         <span
+          role="button"
+          tabIndex={0}
+          aria-label="Open the Command Deck assistant"
           onClick={() => openApp("command")}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openApp("command"); } }}
           className="gv-pill"
           style={{
             cursor: "pointer",
@@ -165,7 +165,11 @@ export function Waybar() {
 
         {/* panel toggle */}
         <span
+          role="button"
+          tabIndex={0}
+          aria-label="Toggle quick settings panel"
           onClick={togglePanel}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePanel(); } }}
           className="gv-pill"
           style={{ cursor: "pointer", padding: "5px 10px", borderRadius: 7, background: "rgba(0,0,0,0.3)", color: "#ccffcc" }}
         >▤</span>

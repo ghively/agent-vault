@@ -10,9 +10,10 @@ type EntityCardProps = {
   entity: ReviewEntity;
   onApprove: () => void;
   onReject: () => void;
+  pending: boolean;
 };
 
-function EntityCard({ entity, onApprove, onReject }: EntityCardProps) {
+function EntityCard({ entity, onApprove, onReject, pending }: EntityCardProps) {
   const confPct = typeof entity.confidence === "number"
     ? `${Math.round(entity.confidence * 100)}%`
     : String(entity.confidence);
@@ -39,14 +40,16 @@ function EntityCard({ entity, onApprove, onReject }: EntityCardProps) {
       <div style={{ display: "flex", gap: 7 }}>
         <button
           onClick={onApprove}
+          disabled={pending}
           style={{
-            cursor: "pointer",
+            cursor: pending ? "wait" : "pointer",
             fontSize: 11.5,
             padding: "5px 13px",
             borderRadius: 7,
             border: `1px solid ${C.greenSoft}`,
             color: C.greenSoft,
             background: "transparent",
+            opacity: pending ? 0.5 : 1,
           }}
         >
           Approve
@@ -69,14 +72,16 @@ function EntityCard({ entity, onApprove, onReject }: EntityCardProps) {
         </button>
         <button
           onClick={onReject}
+          disabled={pending}
           style={{
-            cursor: "pointer",
+            cursor: pending ? "wait" : "pointer",
             fontSize: 11.5,
             padding: "5px 13px",
             borderRadius: 7,
             border: `1px solid rgba(255,95,86,0.5)`,
             color: C.red,
             background: "transparent",
+            opacity: pending ? 0.5 : 1,
           }}
         >
           Reject
@@ -90,9 +95,10 @@ type ProposalCardProps = {
   proposal: Proposal;
   onApprove: () => void;
   onReject: () => void;
+  pending: boolean;
 };
 
-function ProposalCard({ proposal, onApprove, onReject }: ProposalCardProps) {
+function ProposalCard({ proposal, onApprove, onReject, pending }: ProposalCardProps) {
   return (
     <div style={{
       border: `1px solid rgba(128,0,255,0.4)`,
@@ -121,28 +127,32 @@ function ProposalCard({ proposal, onApprove, onReject }: ProposalCardProps) {
       <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
         <button
           onClick={onApprove}
+          disabled={pending}
           style={{
-            cursor: "pointer",
+            cursor: pending ? "wait" : "pointer",
             fontSize: 11.5,
             padding: "5px 13px",
             borderRadius: 7,
             border: `1px solid ${C.greenSoft}`,
             color: C.greenSoft,
             background: "transparent",
+            opacity: pending ? 0.5 : 1,
           }}
         >
           Approve
         </button>
         <button
           onClick={onReject}
+          disabled={pending}
           style={{
-            cursor: "pointer",
+            cursor: pending ? "wait" : "pointer",
             fontSize: 11.5,
             padding: "5px 13px",
             borderRadius: 7,
             border: `1px solid rgba(255,95,86,0.5)`,
             color: C.red,
             background: "transparent",
+            opacity: pending ? 0.5 : 1,
           }}
         >
           Reject
@@ -163,6 +173,14 @@ export function Review() {
 
   const entities: ReviewEntity[] = entitiesData?.items ?? [];
   const proposals: Proposal[] = proposalsData?.items ?? [];
+
+  // Disable a column's buttons while one of its mutations is in flight —
+  // prevents double-submitting the same approve/reject.
+  const entityPending = approveEntity.isPending || rejectEntity.isPending;
+  const proposalPending = approveProposal.isPending || rejectProposal.isPending;
+  const entityError = approveEntity.error ?? rejectEntity.error;
+  const proposalError = approveProposal.error ?? rejectProposal.error;
+  const errText = (e: unknown) => (e instanceof Error ? e.message : "request failed");
 
   return (
     <div style={{ padding: "12px 16px", color: C.text, fontFamily: FONT_MONO, fontSize: 12 }}>
@@ -207,10 +225,16 @@ export function Review() {
               {entities.length}
             </span>
           </div>
+          {entityError != null && (
+            <div style={{ color: C.red, fontSize: 12, marginBottom: 10 }}>
+              error — {errText(entityError)}
+            </div>
+          )}
           {entities.map((entity) => (
             <EntityCard
               key={entity.ref}
               entity={entity}
+              pending={entityPending}
               onApprove={() => approveEntity.mutate({ ref: entity.ref })}
               onReject={() => rejectEntity.mutate({ ref: entity.ref })}
             />
@@ -234,10 +258,16 @@ export function Review() {
             </span>
             <span style={{ marginLeft: "auto", color: C.dim, fontSize: 11 }}>registry vocabulary</span>
           </div>
+          {proposalError != null && (
+            <div style={{ color: C.red, fontSize: 12, marginBottom: 10 }}>
+              error — {errText(proposalError)}
+            </div>
+          )}
           {proposals.map((proposal) => (
             <ProposalCard
               key={proposal.id}
               proposal={proposal}
+              pending={proposalPending}
               onApprove={() => approveProposal.mutate({ id: proposal.id })}
               onReject={() => rejectProposal.mutate({ id: proposal.id })}
             />

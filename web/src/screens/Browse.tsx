@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useEntities } from "../api/hooks";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { EntityRow } from "../api/types";
@@ -15,7 +15,15 @@ export function Browse() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
 
-  const { data, isLoading, isError } = useEntities(query, typeFilter === "all" ? "" : typeFilter);
+  // Debounce the search input (~250ms) so we don't refetch on every keystroke;
+  // useEntities keeps the previous results as placeholderData meanwhile.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data, isLoading, isError } = useEntities(debouncedQuery, typeFilter === "all" ? "" : typeFilter);
   const rows: EntityRow[] = data?.rows ?? [];
   const total: number = data?.total ?? 0;
   const resultCount = `${rows.length} / ${total}`;
