@@ -84,6 +84,10 @@ disable_error_code = [
   "no-untyped-def",
   "attr-defined",
   "no-untyped-call",
+  # FastMCP's @server.tool() decorators are untyped (the optional `mcp` SDK
+  # ships no type info), so decorating makes the tool fns "untyped" — expected
+  # for this eased wiring module, and the reason CI's `mypy agent_vault` was red.
+  "untyped-decorator",
   "import-untyped",
   "import-not-found",
   "var-annotated",
