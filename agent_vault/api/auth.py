@@ -21,6 +21,7 @@ stashed on ``request.state.identity`` for attribution/audit downstream.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -75,6 +76,7 @@ def load_token_registry(settings: Settings) -> dict[str, Identity]:
     if os.path.exists(path):
         try:
             import yaml
+
             with open(path, encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
             for tok, spec in (data.get("tokens") or {}).items():
@@ -124,7 +126,13 @@ def _match_token(presented: str, registry: dict[str, Identity]) -> Identity | No
 
 def create_auth_dependency(settings: Settings) -> Callable[..., None]:
     """Build the FastAPI dependency that authenticates + scope-checks a request
-    and records the caller's Identity on ``request.state.identity``."""
+    and records the caller's Identity on ``request.state.identity``.
+
+    On the 401/403 deny paths the identity is still set to a best-effort marker
+    (carrying the presented token, or ``unknown``) BEFORE the exception is
+    raised, so the audit middleware can attribute denied attempts instead of
+    logging them as a blanket ``anonymous``. A resolved/allowed request always
+    overwrites the marker with the real Identity on the success path."""
     registry = load_token_registry(settings)
     auth_enabled = bool(registry)
 
@@ -140,6 +148,9 @@ def create_auth_dependency(settings: Settings) -> Callable[..., None]:
             return None
 
         if credentials is None:
+            # Attribute the denial: no token presented. Set before raising so
+            # the audit middleware sees a meaningful actor, not a fallback.
+            request.state.identity = Identity("unknown", frozenset())
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing authorization header",
@@ -147,18 +158,27 @@ def create_auth_dependency(settings: Settings) -> Callable[..., None]:
             )
         ident = _match_token(credentials.credentials, registry)
         if ident is None:
+            # Invalid token: attribute by a short stable hash of the presented
+            # token so repeated bad-token attempts are correlatable in the audit
+            # log without leaking the token itself.
+            tok_tag = (
+                "token:" + hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()[:12]
+            )
+            request.state.identity = Identity(tok_tag, frozenset())
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authorization token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        # Valid token — record it before the scope check so a 403 (bad scope)
+        # is attributed to the real caller, not "anonymous".
+        request.state.identity = ident
         scope = required_scope(request.method, request.url.path)
         if scope and not ident.allows(scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"token '{ident.actor}' lacks required scope '{scope}'",
             )
-        request.state.identity = ident
         return None
 
     return auth_dependency

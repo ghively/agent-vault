@@ -25,9 +25,11 @@ CONTRACT (spec §7, never bends):
 Adding a backend = drop one module in this package + add one stanza to
 resolvers.yaml. No schema change, no edit here.
 """
+
 import os
 import sys
 import importlib
+import importlib.util
 from collections import namedtuple
 
 __all__ = ["Ref", "ResolverError", "parse_ref", "load_config", "resolve", "safe_stderr"]
@@ -60,14 +62,12 @@ def parse_ref(ref):
     buggy ref can't traverse out of `store_dir`. Backends MUST still do their
     own containment check — this is defense in depth, not the only line."""
     if not isinstance(ref, str) or "://" not in ref:
-        raise ResolverError(
-            f"malformed credential_ref {ref!r}: expected scheme://store/path")
+        raise ResolverError(f"malformed credential_ref {ref!r}: expected scheme://store/path")
     scheme, rest = ref.split("://", 1)
     scheme = scheme.strip().lower()
     rest = rest.strip()
     if not scheme or not rest:
-        raise ResolverError(
-            f"malformed credential_ref {ref!r}: empty scheme or path")
+        raise ResolverError(f"malformed credential_ref {ref!r}: empty scheme or path")
     if "\x00" in rest or "\\" in rest or any(ord(c) < 0x20 for c in rest):
         raise ResolverError(f"illegal character in credential_ref {ref!r}")
     segments = [s for s in rest.split("/") if s != ""]
@@ -75,8 +75,7 @@ def parse_ref(ref):
         raise ResolverError(f"credential_ref {ref!r} has no store/path")
     for seg in segments:
         if seg in (".", ".."):
-            raise ResolverError(
-                f"credential_ref {ref!r} contains a path-traversal segment")
+            raise ResolverError(f"credential_ref {ref!r} contains a path-traversal segment")
         # Reject leading-dash segments: backends pass these as positional argv to
         # CLIs (op/bw/pass/vault/secret-tool/security), where a leading '-' is
         # parsed as a FLAG — argument injection. (Backends also add `--` where
@@ -84,7 +83,8 @@ def parse_ref(ref):
         if seg.startswith("-"):
             raise ResolverError(
                 f"credential_ref {ref!r} has a segment starting with '-' "
-                f"(would be parsed as a CLI flag); not allowed")
+                f"(would be parsed as a CLI flag); not allowed"
+            )
     return Ref(scheme=scheme, store=segments[0], path=tuple(segments[1:]), raw=ref)
 
 
@@ -103,20 +103,63 @@ def load_config(vault="."):
 
 
 def _import_backend(module_name, scheme, vault):
-    """Import the backend module named in resolvers.yaml. Ensures the vault dir
-    is importable so the configured `resolvers.<name>` package path resolves
-    regardless of cwd (synapse may run with AGENT_VAULT_PATH pointing elsewhere)."""
+    """Import the backend module named in resolvers.yaml.
+
+    Supports the documented extension pattern (drop ``resolvers/<name>.py`` into
+    a vault and reference it as ``resolvers.<name>``) WITHOUT exposing the whole
+    vault directory to the global import system. Previously this prepended the
+    vault dir to ``sys.path[0]`` unconditionally, which let any ``.py`` at the
+    vault root shadow stdlib/installed packages — a write-scope → code-execution
+    pivot that defeated the per-agent scope model.
+
+    The fix: only load a vault-local module whose dotted name starts with
+    ``resolvers.``, and do so by direct file location so no untrusted directory
+    ever enters ``sys.path``. Module names that don't look like a vault-local
+    resolver (e.g. the installed ``agent_vault.resolvers.env``) import normally
+    from the package install path, exactly as before.
+    """
     if not module_name:
         module_name = f"resolvers.{scheme}"
-    vpath = os.path.abspath(vault)
-    if vpath not in sys.path:
-        sys.path.insert(0, vpath)
+    # Vault-local resolver extension: resolvers.<name> resolved against <vault>/resolvers/<name>.py
+    if module_name.startswith("resolvers.") and len(module_name) > len("resolvers."):
+        leaf = module_name[len("resolvers.") :]
+        # Conservative leaf check — module names are identifiers, nothing path-shaped.
+        if leaf.isidentifier() and not leaf.startswith("__"):
+            # Cache: a vault-local backend is loaded once, not re-read from disk
+            # on every credential resolve (resolve() runs per /api/creds request).
+            cached = sys.modules.get(module_name)
+            if cached is not None:
+                return cached
+            candidate = os.path.join(os.path.abspath(vault), "resolvers", leaf + ".py")
+            if os.path.isfile(candidate):
+                spec = importlib.util.spec_from_file_location(module_name, candidate)
+                if spec is not None and spec.loader is not None:
+                    mod = importlib.util.module_from_spec(spec)
+                    # Register under the requested dotted name so a subsequent
+                    # call hits the cache above instead of re-reading the file,
+                    # and so the module's __name__ matches resolvers.yaml.
+                    sys.modules[module_name] = mod
+                    try:
+                        spec.loader.exec_module(mod)
+                    except Exception as e:
+                        # A syntax error / module-level crash in a vault-local
+                        # resolver must surface as a clean ResolverError, not a
+                        # raw traceback, so callers (CLI resolve, /api/creds)
+                        # report "could not resolve..." instead of crashing.
+                        sys.modules.pop(module_name, None)
+                        raise ResolverError(
+                            f"resolver backend {module_name!r} for scheme "
+                            f"{scheme!r} failed to load: {e}"
+                        ) from e
+                    return mod
+                # File exists but spec failed to build — fall through to the
+                # normal import, which will raise a clear ImportError.
     try:
         return importlib.import_module(module_name)
     except ImportError as e:
         raise ResolverError(
-            f"resolver backend {module_name!r} for scheme {scheme!r} is not "
-            f"importable: {e}")
+            f"resolver backend {module_name!r} for scheme {scheme!r} is not importable: {e}"
+        )
 
 
 def resolve(ref, vault=".", config=None):
@@ -135,14 +178,15 @@ def resolve(ref, vault=".", config=None):
         known = ", ".join(sorted(backends)) or "(none configured)"
         raise ResolverError(
             f"no resolver configured for scheme {parsed.scheme!r} "
-            f"(known: {known}); add a stanza to registry/resolvers.yaml")
+            f"(known: {known}); add a stanza to registry/resolvers.yaml"
+        )
     module = _import_backend(backend.get("module"), parsed.scheme, vault)
     fn = getattr(module, "resolve", None)
     if not callable(fn):
         raise ResolverError(
-            f"resolver module for scheme {parsed.scheme!r} has no resolve() function")
+            f"resolver module for scheme {parsed.scheme!r} has no resolve() function"
+        )
     secret = fn(parsed, backend)
     if not isinstance(secret, str):
-        raise ResolverError(
-            f"resolver for scheme {parsed.scheme!r} returned a non-string secret")
+        raise ResolverError(f"resolver for scheme {parsed.scheme!r} returned a non-string secret")
     return secret
