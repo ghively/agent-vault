@@ -5,6 +5,7 @@ Exposes the shared knowledgebase to any MCP-capable agent as first-class tools,
 so a fleet of agents can read and contribute without hand-rolling HTTP:
 
     vault_search        ranked full-text search over prose + metadata
+    vault_ask           question-shaped retrieval (search + focused context)
     vault_get           full record for one entity (facts, prose, links)
     vault_list          entity summaries, optionally filtered by type
     vault_status        counts + last pipeline run

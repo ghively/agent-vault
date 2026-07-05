@@ -154,7 +154,8 @@ order, from any runner.
 
 Two side branches:
 - **`collections_importer.py`** — for catalog media you don't have files for
-  (Steam/Goodreads/IMDB/CSV exports) → one `collection` entity per row.
+  (Steam/Goodreads/IMDB/Letterboxd/Discogs/Kindle/Audible/CSV exports) → one
+  `collection` entity per row.
 - **`reclassify_apply.py`** — the human-approved step that physically re-files an
   entity across type folders and rewrites every cross-reference.
 
@@ -296,7 +297,7 @@ the `python -m agent_vault.<module>` form is the only way to run it directly.
 | `resolvers/` | (library, not run directly) | Credential resolution: dispatcher + 9 backends (`age`, `env`, `onepassword`, `bitwarden`/`vaultwarden`, `pass`, `gpg`, `secret-tool`, `keychain`, `vault`) | no | nothing (reads external secret stores on demand) |
 | `validate` | `python -m agent_vault.validate .` | Schema validator (incl. no-plaintext-secret gate); exit 1 on any error | no | nothing |
 | `secret_scan` | (library, not run directly) | Detects secret-shaped strings; used by ingest (flag) + validate (reject) | no | nothing (library) |
-| `lint` | `python -m agent_vault.lint .` | Operational anomaly report (9 checks); exit 1 on findings | no | optional JSON report only |
+| `lint` | `python -m agent_vault.lint .` | Operational anomaly report (10 checks); exit 1 on findings | no | optional JSON report only |
 | `reclassify_apply` | `python -m agent_vault.reclassify_apply .` | Applies human-approved reclassify proposals; re-files + rewrites refs | no | entity files, `discovery/promoted.jsonl` |
 | `review` | `python -m agent_vault.review . <cmd>` | Human approve/reject: queued proposals (incl. new types) + needs-review entities | no | registry (on approve), entity `status:` lines, `discovery/promoted.jsonl` |
 | `collections_importer` | `python -m agent_vault.collections_importer . --source <path>` | Library exports → `collection` entities | no | `entities/collection/`, `raw/collections/_imports.jsonl` |

@@ -8,7 +8,8 @@ or with a React UI.
 **New here?** Read [`DOCS.md`](./DOCS.md) — plain-language overview, an honest
 real-vs-scaffolding status table, the architecture, a full script reference, and
 setup/usage instructions. For the HTTP API surface, see [`docs/API.md`](./docs/API.md);
-for the web frontend's architecture, see [`web/README.md`](./web/README.md).
+for the web frontend's architecture, see [`web/README.md`](./web/README.md); for
+running it in production (Docker, TLS, auth, backups), see [`docs/DEPLOY.md`](./docs/DEPLOY.md).
 
 ## What it is
 
@@ -221,8 +222,8 @@ seed vocabulary. Re-running the pass makes zero further registry edits.
   into the registry.
 - `cadences/monthly.sh` — validate + lint (read-only audit). Exits non-zero
   on findings so the runner can wake a human.
-- `lint.py` — read-only anomaly report. Nine checks: broken `related:`
-  refs, stub-with-prose / compiled-without-prose mismatches, compile drift
+- `lint.py` — read-only anomaly report. Ten checks: broken `related:`
+  refs, stub-with-prose mismatches, compiled-without-prose mismatches, compile drift
   (sources_hash diverged from compiled_from_hash), aging needs-review
   entities, aging queued proposals, stuck reclassifies, raw files not yet
   ingested, manifest records pointing at deleted stubs, and ingest errors
@@ -244,11 +245,14 @@ the cadence scripts are currently exercised manually.
 
 **Built (Stage 6) — collections importer for catalog media:**
 - `collections_importer.py` — turns library exports (Steam, Goodreads,
-  IMDB, generic CSV/JSON) into `entities/collection/<slug>.md` files.
-  Bookkeeping records, not narrative ones: written with `status: compiled`
-  and matching hashes so the LLM compile pass leaves them alone.
-- Format detection is by header sniff: presence of `appid` → Steam,
-  `ISBN` → Goodreads, `Title Type` → IMDB, `subtype` column → generic.
+  IMDB, Letterboxd, Discogs, Kindle, Audible, generic CSV/JSON) into
+  `entities/collection/<slug>.md` files. Bookkeeping records, not narrative
+  ones: written with `status: compiled` and matching hashes so the LLM
+  compile pass leaves them alone.
+- Format detection is by header sniff: `appid` → Steam, `Letterboxd URI` →
+  Letterboxd, `catalog#`/`release_id` → Discogs, `narrator` → Audible,
+  `asin`+title → Kindle, `ISBN` → Goodreads, `Title Type` → IMDB,
+  `title`+`subtype` → generic.
 - Idempotent: re-importing the same export is a no-op (slug-level merge,
   identifier-aware collision handling).
 - `cadences/import_collections.sh` — wrapper for manual invocation when
@@ -346,7 +350,7 @@ agent-vault/                    # Repo root == the vault root (registry/, raw/, 
 ├── agent_vault/                # Python package (CLI + service)
 │   ├── api/                    # FastAPI service — routers are flat files, no routes/ subfolder
 │   │   ├── app.py              # Service factory (mounts routers + serves web/dist)
-│   │   ├── config.py           # Settings (env vars: AGENT_VAULT_HOST/PORT/PATH, VAULT_TOKEN, VAULT_TOKENS)
+│   │   ├── config.py           # Settings (env vars: AGENT_VAULT_HOST/PORT/PATH, VAULT_TOKEN); VAULT_TOKENS is read in auth.py
 │   │   ├── auth.py             # per-agent identity + scopes (read/write/resolve); audit.py logs writes/resolves
 │   │   ├── reads.py (+ /api/search), status.py (+ /api/answer), edit.py, creds.py,
 │   │   │   review.py, jobs.py (+ DELETE), history.py, settings.py, audit.py

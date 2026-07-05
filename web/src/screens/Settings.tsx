@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { NsTitle, NsCard } from "../ui/Ns";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import { vaultFetch } from "../api/client";
-import { useWindows } from "../store/windows";
+import { useWindows, SCALE_MIN, SCALE_MAX } from "../store/windows";
 
 interface Backend {
   scheme: string;
@@ -129,7 +129,7 @@ export function Settings() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <span style={{ color: C.dim, minWidth: 80 }}>scale</span>
-          <input type="range" min={0.7} max={1.4} step={0.05} value={scale} onChange={(e) => setDesktopScale(parseFloat(e.target.value))} className="gv-rng" style={{ flex: 1 }} />
+          <input type="range" min={SCALE_MIN} max={SCALE_MAX} step={0.05} value={scale} onChange={(e) => setDesktopScale(parseFloat(e.target.value))} className="gv-rng" style={{ flex: 1 }} />
           <span style={{ color: C.cyan, minWidth: 48, textAlign: "right" }}>{Math.round(scale * 100)}%</span>
         </div>
       </Card>

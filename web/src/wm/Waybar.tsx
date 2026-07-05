@@ -120,12 +120,26 @@ export function Waybar() {
       {/* right modules */}
       <div style={{ display: "flex", alignItems: "center", gap: 7, flex: "none" }}>
         {/* review counter */}
-        <span className="gv-pill" style={{ padding: "5px 10px", borderRadius: 7, background: "rgba(0,243,255,0.12)", color: "#00f3ff" }}>
+        <span
+          className="gv-pill"
+          role="status"
+          aria-label={proposals.isError
+            ? "Proposal review count unavailable (API error)"
+            : `${reviewCount} proposals awaiting review`}
+          style={{ padding: "5px 10px", borderRadius: 7, background: "rgba(0,243,255,0.12)", color: "#00f3ff" }}
+        >
           ◈ {reviewCount}
         </span>
 
         {/* entity flags */}
-        <span className="gv-pill" style={{ padding: "5px 10px", borderRadius: 7, background: "rgba(255,189,46,0.14)", color: "#ffbd2e" }}>
+        <span
+          className="gv-pill"
+          role="status"
+          aria-label={entities.isError
+            ? "Entity review count unavailable (API error)"
+            : `${entityCount} entities flagged for review`}
+          style={{ padding: "5px 10px", borderRadius: 7, background: "rgba(255,189,46,0.14)", color: "#ffbd2e" }}
+        >
           ⚑ {entityCount}
         </span>
 

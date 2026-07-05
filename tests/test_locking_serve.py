@@ -58,8 +58,10 @@ def test_serve_main_starts_uvicorn_with_settings(monkeypatch):
         captured["kwargs"] = kwargs
 
     monkeypatch.setattr(serve.uvicorn, "run", fake_run)
+    # A non-loopback bind must carry a token, else the open-bind guard refuses
+    # it (see test_serve_guard.py); this is the realistic bind-all + auth config.
     monkeypatch.setattr(serve.Settings, "from_env",
-                        classmethod(lambda cls: Settings(host="0.0.0.0", port=1234, token="")))
+                        classmethod(lambda cls: Settings(host="0.0.0.0", port=1234, token="prod-token")))
 
     serve.main()
     assert captured["app"] is not None

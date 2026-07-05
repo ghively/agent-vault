@@ -1,0 +1,21 @@
+# Keep the build context small and reproducible.
+.git
+.github
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+# Web build inputs the image rebuilds itself:
+web/node_modules
+web/dist
+# Repo docs / dev-only trees not needed in the image:
+tests
+docs
+raw
+entities
+cadences
+*.md
+!README.md

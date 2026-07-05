@@ -70,7 +70,15 @@ export function usePatchEntity() {
       ),
     onSuccess: async (detail, v) => {
       qc.setQueryData(["entity", v.slug], detail);
-      await qc.invalidateQueries({ queryKey: ["entities"] });
+      await Promise.all([
+        // PATCH rewrote the entity's markdown file, so the raw editor copy
+        // (["entity", slug, "raw"]) is stale — invalidate it so "Open in editor"
+        // reloads the just-saved content instead of showing (and then clobbering
+        // with) a pre-edit copy. The detail cache is seeded above, so only the
+        // raw sub-key needs invalidating here.
+        qc.invalidateQueries({ queryKey: ["entity", v.slug, "raw"] }),
+        qc.invalidateQueries({ queryKey: ["entities"] }),
+      ]);
     },
   });
 }
@@ -99,6 +107,13 @@ export function useApplyConfig() {
   return useMutation({
     mutationFn: (body: { env?: Record<string, string>; thresholds?: Record<string, number> }) =>
       vaultFetch("/api/config/apply", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["config"] }),
+        // /api/settings echoes the same compiler config (model, thresholds), so
+        // refresh the settings overview too or it shows the pre-apply values.
+        qc.invalidateQueries({ queryKey: ["settings"] }),
+      ]);
+    },
   });
 }

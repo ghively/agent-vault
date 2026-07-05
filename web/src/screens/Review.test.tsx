@@ -15,7 +15,7 @@ const SCHEMA = {
 };
 const DETAIL = {
   slug: "furnace", title: "Furnace", type: "asset", subtype: "appliance",
-  status: "needs_review", confidence: 0.4, hash: "h",
+  status: "needs-review", confidence: 0.4, hash: "h",
   prose: "", sources: [], facts: [], links: [],
 };
 

@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, Depends, Request
 
+from agent_vault.api.auth import load_token_registry
 from agent_vault.api.config import Settings
 
 router = APIRouter()
@@ -92,7 +93,10 @@ async def get_settings_overview(s: Settings = Depends(get_settings)) -> dict[str
             "vault_path": str(vault),
             "host": s.host,
             "port": s.port,
-            "auth_enabled": bool(s.token),
+            # Mirror the real auth gate: auth is on when the merged token
+            # registry (VAULT_TOKEN + registry/tokens.yaml + VAULT_TOKENS) is
+            # non-empty — not just when VAULT_TOKEN alone is set.
+            "auth_enabled": bool(load_token_registry(s)),
         },
         "vault": {
             "entity_count": _entity_count(vault),

@@ -231,7 +231,12 @@ def build_entity_detail(vault: Path, slug: str, path: Path) -> dict[str, Any]:
             {
                 "label": row["label"],
                 "ref": row["ref"],
-                "title": tgt["title"] if tgt else target.replace("-", " ").title(),
+                # Index rows omit `title` when the entity's frontmatter has none
+                # (build_index only copies non-empty passthrough fields), so use
+                # .get() with the slug-derived fallback instead of tgt["title"],
+                # which would KeyError -> 500 on a titleless linked entity.
+                "title": (tgt.get("title") if tgt else None)
+                or target.replace("-", " ").title(),
                 "exists": tgt is not None,
             }
         )

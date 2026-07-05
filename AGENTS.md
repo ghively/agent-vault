@@ -125,7 +125,8 @@ agent_vault.<module>` and appends the same `discovery/_runs.jsonl` record.
 **The web UI's job runner (`agent_vault/api/jobs.py`) does NOT call
 `run_cadence.py` or the `.sh` wrappers.** `POST /api/jobs/run` directly
 subprocess-invokes one of `python -m agent_vault.{ingest,compiler,promote,
-reclassify_apply}` per request (see [`docs/API.md`](docs/API.md)) — it's a
+reclassify_apply,lint,compact}` per request (the six ops in `ALLOWED_OPS`; see
+[`docs/API.md`](docs/API.md)) — it's a
 third, independent invocation path, not a wrapper around the cadence
 scripts. All three paths (`.sh`, `run_cadence.py`, `api/jobs.py`) ultimately
 run the same underlying `agent_vault.*` modules, just with different

@@ -228,45 +228,55 @@ def test_reject_entity_invalid_ref():
     assert response.status_code in (404, 405, 422)
 
 
-def test_lock_held_during_approve():
-    """Test that vault lock is held during approve operation."""
-    from unittest.mock import patch, MagicMock
-    import threading
+def test_approve_proposal_no_self_deadlock(monkeypatch):
+    """Regression: approving a proposal must NOT wrap the self-locking
+    review.cmd_approve in a second vault_lock. flock is not re-entrant across
+    two open()s in one process, so a nested lock self-deadlocks until the lock
+    timeout and then 503s (the action never happens).
 
+    This runs the REAL cmd_approve (not mocked, unlike the *_success tests) with
+    a short lock timeout, so if the outer lock is ever reintroduced the request
+    fails fast as a 503 here instead of silently passing."""
+    monkeypatch.setenv("AGENT_VAULT_LOCK_TIMEOUT_S", "5")
     vault, pid = create_test_vault_with_pending_proposal()
     settings = Settings(vault_path=str(vault), token="")
-    app = create_app(settings)
-    client = TestClient(app)
+    client = TestClient(create_app(settings))
 
-    # Track if lock was acquired
-    lock_acquired = threading.Event()
+    response = client.post(f"/api/review/proposals/{pid}/approve")
 
-    captured_lock = None
+    # Must not be 503 (would be the deadlock/lock-timeout signature).
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
 
-    def mock_lock_enter(self):
-        nonlocal captured_lock
-        captured_lock = self
-        lock_acquired.set()
-        # Call original __enter__ if it exists
-        return self
 
-    def mock_lock_exit(self, *args):
-        return None
+def test_approve_entity_no_self_deadlock(monkeypatch):
+    """Regression: approving a needs-review entity runs the self-locking
+    review.cmd_approve_entity; the handler must not add an outer lock. Real path,
+    short timeout — a reintroduced nested lock surfaces as a 503."""
+    monkeypatch.setenv("AGENT_VAULT_LOCK_TIMEOUT_S", "5")
+    vault = create_test_vault_with_pending_entity_review()
+    settings = Settings(vault_path=str(vault), token="")
+    client = TestClient(create_app(settings))
 
-    # Patch vault_lock to track acquisition
-    with patch('agent_vault.api.review.vault_lock') as mock_lock_class:
-        mock_lock = MagicMock()
-        mock_lock.__enter__ = mock_lock_enter
-        mock_lock.__exit__ = mock_lock_exit
-        mock_lock_class.return_value = mock_lock
+    response = client.post("/api/review/entities/account/pending-account/approve")
 
-        # Also patch cmd_approve to avoid complex logic
-        with patch('agent_vault.review.cmd_approve', MagicMock()):
-            response = client.post(f"/api/review/proposals/{pid}/approve")
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
 
-    assert response.status_code == 200
-    # Verify lock was instantiated
-    mock_lock_class.assert_called()
+
+def test_reject_entity_no_self_deadlock(monkeypatch):
+    """Regression: rejecting a needs-review entity runs the self-locking
+    review.cmd_reject_entity; the handler must not add an outer lock. Real path,
+    short timeout — a reintroduced nested lock surfaces as a 503."""
+    monkeypatch.setenv("AGENT_VAULT_LOCK_TIMEOUT_S", "5")
+    vault = create_test_vault_with_pending_entity_review()
+    settings = Settings(vault_path=str(vault), token="")
+    client = TestClient(create_app(settings))
+
+    response = client.post("/api/review/entities/account/pending-account/reject")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
 
 
 def test_response_shape_matches_synapsenas():
