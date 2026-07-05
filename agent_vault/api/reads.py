@@ -26,8 +26,19 @@ _CRED_RE = re.compile(r"credential_ref:\s*(\S+)")
 
 
 async def get_settings(request: Request) -> Settings:
-    """Get settings from app state (dependency injection)."""
-    return request.app.state.settings  # type: ignore
+    """Get settings from app state (dependency injection).
+
+    In MTAV mode, returns a Settings copy with ``vault_path`` replaced by the
+    per-request resolved vault (set by the auth dependency on request.state).
+    In legacy mode, vault_path comes from request.state too (the auth dep sets
+    it to settings.vault_path), so both paths work identically.
+    """
+    s = request.app.state.settings  # type: ignore
+    vault_path = getattr(request.state, "vault_path", "") or ""
+    if vault_path and vault_path != s.vault_path:
+        from dataclasses import replace
+        return replace(s, vault_path=vault_path)
+    return s
 
 
 def load_index(vault: Path) -> list[dict[str, Any]]:

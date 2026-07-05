@@ -219,7 +219,15 @@ def test_run_job_endpoint_retains_task_reference(monkeypatch):
         settings = Settings(vault_path=str(vault), token="")
         before = len(jobs_module._background_tasks)
 
-        await jobs_module.run_job_endpoint(req, settings)
+        # The endpoint now takes (request, job_request); build a minimal mock
+        # request object that has .state.vault_path and .state.vault_name.
+        from unittest.mock import AsyncMock, MagicMock
+        mock_request = MagicMock()
+        mock_request.app.state.settings = settings
+        mock_request.state.vault_path = str(vault)
+        mock_request.state.vault_name = ""
+
+        await jobs_module.run_job_endpoint(mock_request, req)
         # Task created and still pending (gate not set) -> must be retained.
         assert len(jobs_module._background_tasks) == before + 1
 

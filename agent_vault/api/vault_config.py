@@ -49,8 +49,13 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 async def get_settings(request: Request) -> Settings:
-    """Settings from app state (dependency injection)."""
-    return request.app.state.settings  # type: ignore[no-any-return]
+    """Get settings, with resolved vault_path from request state (MTAV)."""
+    s = request.app.state.settings  # type: ignore
+    vault_path = getattr(request.state, "vault_path", "") or ""
+    if vault_path and vault_path != s.vault_path:
+        from dataclasses import replace
+        return replace(s, vault_path=vault_path)
+    return s
 
 
 class ConfigApplyRequest(BaseModel):

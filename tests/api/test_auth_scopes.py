@@ -55,7 +55,7 @@ def test_vault_tokens_env_registry(monkeypatch):
         "wtok": {"actor": "writer", "scopes": ["read", "write"]},
     }))
     reg = load_token_registry(Settings(vault_path=".", token=""))
-    assert reg["rtok"] == Identity("reader", frozenset({"read"}))
+    assert reg["rtok"] == Identity.legacy("reader", frozenset({"read"}))
     assert reg["wtok"].allows("write")
     assert not reg["rtok"].allows("write")
 
