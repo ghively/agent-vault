@@ -15,7 +15,7 @@ authors = [{ name = "Agent Vault" }]
 dependencies = ["pyyaml>=6.0", "fastapi>=0.115", "uvicorn[standard]>=0.32", "sse-starlette>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11", "httpx2>=2.0", "types-PyYAML>=6.0"]
+dev = ["pytest>=8.0", "pytest-timeout>=2.3", "pytest-cov>=5.0", "ruff>=0.6", "mypy>=1.11", "httpx2>=2.0", "types-PyYAML>=6.0"]
 # Optional: expose the vault to agents over the Model Context Protocol.
 # `pip install "agent-vault[mcp]"` then run `agent-vault-mcp`.
 mcp = ["mcp>=1.2"]
@@ -107,3 +107,9 @@ testpaths = ["tests"]
 # subprocesses and has hung in constrained sandboxes — fail fast with a
 # traceback instead of eating the CI job's whole wall-clock budget.
 timeout = 120
+
+# Coverage is opt-in (CI passes --cov flags) so local `pytest` stays fast;
+# this just scopes measurement to the package when it is enabled.
+[tool.coverage.run]
+source = ["agent_vault"]
+omit = ["agent_vault/mcp_server.py"]  # thin optional FastMCP wiring; covered by the mcp-extra job's import smoke

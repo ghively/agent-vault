@@ -8,7 +8,8 @@ or with a React UI.
 **New here?** Read [`DOCS.md`](./DOCS.md) — plain-language overview, an honest
 real-vs-scaffolding status table, the architecture, a full script reference, and
 setup/usage instructions. For the HTTP API surface, see [`docs/API.md`](./docs/API.md);
-for the web frontend's architecture, see [`web/README.md`](./web/README.md).
+for the web frontend's architecture, see [`web/README.md`](./web/README.md); for
+running it in production (Docker, TLS, auth, backups), see [`docs/DEPLOY.md`](./docs/DEPLOY.md).
 
 ## What it is
 

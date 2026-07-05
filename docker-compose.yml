@@ -1,0 +1,30 @@
+# Minimal production-ish deployment: the Agent Vault API + built UI, serving the
+# vault mounted from ./vault on the host.
+#
+# Quick start:
+#   1. Put your vault (entities/, registry/, raw/, discovery/) in ./vault
+#   2. Set a token:  export VAULT_TOKEN=$(head -c 32 /dev/urandom | base64)
+#   3. docker compose up --build
+#
+# The service is fail-closed: with AGENT_VAULT_HOST=0.0.0.0 it will REFUSE to
+# start unless VAULT_TOKEN (or another token source) is set. Terminate TLS at a
+# reverse proxy in front of it — see docs/DEPLOY.md.
+
+services:
+  agent-vault:
+    build: .
+    image: agent-vault:local
+    ports:
+      - "7778:7778"
+    environment:
+      AGENT_VAULT_HOST: "0.0.0.0"
+      AGENT_VAULT_PORT: "7778"
+      AGENT_VAULT_PATH: "/vault"
+      # Required for a network bind. Provide via the shell env or a .env file;
+      # never commit a real token.
+      VAULT_TOKEN: "${VAULT_TOKEN:?set VAULT_TOKEN before starting (see docs/DEPLOY.md)}"
+      # Bounded lock wait so a hung mutating pass can't wedge the service.
+      AGENT_VAULT_LOCK_TIMEOUT_S: "600"
+    volumes:
+      - ./vault:/vault
+    restart: unless-stopped

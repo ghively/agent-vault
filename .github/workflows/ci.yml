@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch: {}
 
 jobs:
   backend:
@@ -30,8 +31,18 @@ jobs:
       - name: Run mypy
         run: mypy agent_vault
 
-      - name: Run pytest
-        run: pytest -v
+      - name: Run pytest (with coverage gate)
+        run: pytest -v --cov=agent_vault --cov-report=term-missing --cov-fail-under=65
+
+      - name: Dependency audit (advisory)
+        # Informational only: pip-audit scans the whole environment (including
+        # base build tooling like setuptools/wheel) which the project can't pin,
+        # so a fresh advisory there must not block the pipeline. It still surfaces
+        # runtime-dep issues in the log for triage.
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit
 
   frontend:
     runs-on: ubuntu-latest
@@ -50,6 +61,11 @@ jobs:
           cd web
           npm ci
 
+      - name: Typecheck
+        run: |
+          cd web
+          npm run typecheck
+
       - name: Run ESLint
         run: |
           cd web
@@ -64,3 +80,35 @@ jobs:
         run: |
           cd web
           npm run build
+
+      - name: Audit production dependencies
+        # Blocking: scoped to shipped (non-dev) deps, so build-tooling advisories
+        # in vite/vitest don't gate — only vulnerabilities in code that ships.
+        run: |
+          cd web
+          npm audit --omit=dev --audit-level=high
+
+  mcp-extra:
+    # Exercises the optional [mcp] install path so the FastMCP wiring can't
+    # silently rot (the mypy blind spot that had this pipeline red lived here).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install with the mcp extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,mcp]
+
+      - name: Typecheck with mcp installed
+        run: mypy agent_vault
+
+      - name: MCP import + tool tests
+        run: pytest -v tests/test_mcp_server_import.py tests/test_mcp_tools.py
