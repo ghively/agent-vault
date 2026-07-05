@@ -50,8 +50,9 @@ export function Desktop() {
   // Global keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+K to toggle command bar
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      // Cmd/Ctrl+K to toggle command bar. Match case-insensitively so Shift or
+      // Caps Lock (which make e.key "K") don't swallow the shortcut.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         toggleCommandBar();
         return;

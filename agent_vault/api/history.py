@@ -59,7 +59,9 @@ def get_runs(
 
     runs = read_jsonl(runs_path)
     runs.reverse()  # newest first
-    limited_runs = runs[:limit] if limit else runs
+    # `limit` is validated ge=0; slice unconditionally so limit=0 means "none",
+    # not "all" (the old `if limit` treated 0 as falsy and returned everything).
+    limited_runs = runs[:limit]
 
     return {"runs": limited_runs}
 

@@ -21,8 +21,15 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
     // Validate the token against the API BEFORE trusting it — a wrong/stale
     // token otherwise mounts the app, 401s on the first call, and bounces back
     // here with no explanation.
+    //
+    // Probe an AUTHENTICATED endpoint (/api/status), not /api/health: health is
+    // deliberately open (no auth dependency), so it returns 200 for any token —
+    // including an invalid one — which would defeat this gate. /api/status is
+    // read-scoped, so it returns 401 for a bad token and 403 for a token that
+    // lacks read scope. On an open vault (no tokens configured) it returns 200,
+    // which correctly admits the user.
     try {
-      const r = await fetch(apiUrl("/api/health"), { headers: { Authorization: `Bearer ${t}` } });
+      const r = await fetch(apiUrl("/api/status"), { headers: { Authorization: `Bearer ${t}` } });
       if (r.ok) {
         setToken(t);
       } else if (r.status === 401) {

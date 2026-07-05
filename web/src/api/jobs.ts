@@ -11,6 +11,20 @@ export async function startJob(op: string, args: string[] = []): Promise<string>
 }
 
 /**
+ * Best-effort request to terminate a running job server-side
+ * (DELETE /api/jobs/{id}). Aborting the SSE fetch only stops the client from
+ * reading; the subprocess keeps running until this is called. Swallows errors
+ * because the stream is already torn down client-side regardless.
+ */
+export async function cancelJob(jobId: string): Promise<void> {
+  try {
+    await vaultFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * Recompile a single entity. The endpoint is SYNCHRONOUS: it returns the
  * compile summary dict directly (no job_id / no SSE stream).
  */
@@ -76,6 +90,8 @@ export function createSSEParser(
 export interface JobResult {
   state: "done" | "error";
   rc: number | null;
+  /** Human-readable reason on transport/auth failures (e.g. a 403 forbidden). */
+  message?: string;
 }
 
 /**
@@ -101,8 +117,15 @@ export async function streamJob(
     return { state: "error", rc: null };
   }
   // 401 = bad/missing token -> clear it. 403 = valid but unscoped -> keep it
-  // (matches the policy documented in client.ts).
-  if (resp.status === 401) useAuth.getState().clearToken();
+  // (matches the policy documented in client.ts). Surface both distinctly so the
+  // UI can explain a permission failure instead of an opaque "error".
+  if (resp.status === 401) {
+    useAuth.getState().clearToken();
+    return { state: "error", rc: null, message: "unauthorized — token cleared" };
+  }
+  if (resp.status === 403) {
+    return { state: "error", rc: null, message: "forbidden — your key lacks permission to run jobs" };
+  }
   if (!resp.ok || !resp.body) return { state: "error", rc: null };
 
   let result: JobResult | null = null;

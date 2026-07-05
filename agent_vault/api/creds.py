@@ -203,6 +203,11 @@ async def recompile_entity(
 
     except LockTimeout:
         raise HTTPException(status_code=503, detail="vault is locked by another operation")
+    except HTTPException:
+        # The 422s raised above (malformed entity file / frontmatter) are
+        # Exception subclasses; let them propagate with their own status
+        # instead of being rewrapped as a generic 502 by the catch-all below.
+        raise
     except ImportError as e:
         raise HTTPException(status_code=502, detail=f"compiler module unavailable: {e}")
     except Exception as e:

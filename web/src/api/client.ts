@@ -38,15 +38,44 @@ export class ApiError extends Error {
   }
 }
 
-/** Read an error body safely: never surface a raw HTML error page, always cap length. */
+const cap = (s: string): string => (s.length > 300 ? s.slice(0, 300) + "…" : s);
+
+/**
+ * Read an error body safely: never surface a raw HTML error page, always cap
+ * length, and unwrap FastAPI's `{"detail": …}` envelope so the user sees the
+ * message rather than the literal JSON. `detail` may be a string, a
+ * `{message, errors[]}` object (edit.py's validation-rollback), or a 422 array
+ * of `{loc, msg}` items.
+ */
 async function errorMessage(res: Response): Promise<string> {
+  let text: string;
   try {
-    const text = (await res.text()).trim();
-    if (!text || text.startsWith("<")) return `request failed (${res.status})`;
-    return text.length > 300 ? text.slice(0, 300) + "…" : text;
+    text = (await res.text()).trim();
   } catch {
     return `request failed (${res.status})`;
   }
+  if (!text || text.startsWith("<")) return `request failed (${res.status})`;
+  try {
+    const detail = (JSON.parse(text) as { detail?: unknown })?.detail;
+    if (typeof detail === "string" && detail.trim()) return cap(detail.trim());
+    if (Array.isArray(detail)) {
+      const msgs = detail
+        .map((e) => (e && typeof (e as { msg?: unknown }).msg === "string"
+          ? (e as { msg: string }).msg
+          : String(e)))
+        .filter(Boolean);
+      if (msgs.length) return cap(msgs.join("; "));
+    } else if (detail && typeof detail === "object") {
+      const d = detail as { message?: unknown; errors?: unknown };
+      if (typeof d.message === "string") {
+        const errs = Array.isArray(d.errors) ? d.errors.map(String).filter(Boolean) : [];
+        return cap(errs.length ? `${d.message}: ${errs.join("; ")}` : d.message);
+      }
+    }
+  } catch {
+    // Body wasn't JSON — fall through to the raw (capped) text.
+  }
+  return cap(text);
 }
 
 export async function vaultFetch<T>(path: string, init: RequestInit = {}): Promise<T> {

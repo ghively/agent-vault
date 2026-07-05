@@ -34,6 +34,12 @@ LINKS_RE = re.compile(r"<!-- LINKS:BEGIN -->.*?<!-- LINKS:END -->", re.S)
 # Field-name shape for registry/field_mappings.yaml entries. Mirrors
 # promote.py's _FIELD_RE (§5) so validate and promote agree.
 FIELD_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,30}$")
+# Field-mapping bounds — mirror promote.py's _MAX_PATTERN_LEN/_MAX_GROUPS/
+# _VALID_PARSE (spec §5.4) so a hand-edited field_mappings.yaml can't pass
+# validate while it would fail promote's deterministic gate.
+MAX_PATTERN_LEN = 200
+MAX_GROUPS = 2
+VALID_PARSE = ("text", "float", "int", "iso-date")
 
 
 # The schema-file format version this code understands. Bump ONLY alongside a
@@ -261,10 +267,19 @@ def validate_field_mappings(vault):
         if not pattern or not isinstance(pattern, str):
             errs.append(f"{rel}: mappings[{i}] ({mid}) missing 'pattern'")
         else:
+            # Bounded pattern length (spec §5.4; mirrors promote._MAX_PATTERN_LEN).
+            if len(pattern) > MAX_PATTERN_LEN:
+                errs.append(f"{rel}: mappings[{i}] ({mid}) pattern length "
+                            f"{len(pattern)} > {MAX_PATTERN_LEN}")
+            compiled = None
             try:
-                re.compile(pattern)
+                compiled = re.compile(pattern)
             except re.error as e:
                 errs.append(f"{rel}: mappings[{i}] ({mid}) pattern does not compile: {e}")
+            # Bounded capture-group count (spec §5.4; mirrors promote._MAX_GROUPS).
+            if compiled is not None and compiled.groups > MAX_GROUPS:
+                errs.append(f"{rel}: mappings[{i}] ({mid}) pattern has "
+                            f"{compiled.groups} capture groups > {MAX_GROUPS}")
             # ReDoS guard: reject nested quantifiers (same check as promote.py)
             try:
                 from re import _parser as _rp  # type: ignore[attr-defined]
@@ -287,6 +302,11 @@ def validate_field_mappings(vault):
         elif not FIELD_RE.match(field):
             errs.append(f"{rel}: mappings[{i}] ({mid}) field {field!r} "
                         f"must match ^[a-z0-9][a-z0-9_]{{0,30}}$")
+        # `parse` type must be one promote.py knows how to apply (spec §5.4).
+        parse = m.get("parse", "text")
+        if parse not in VALID_PARSE:
+            errs.append(f"{rel}: mappings[{i}] ({mid}) parse {parse!r} "
+                        f"not in {list(VALID_PARSE)}")
         # secret-scan: no stored value should look like a plaintext secret.
         # field_mappings.yaml stores regex patterns (not captured secrets),
         # but a pattern's text could accidentally embed one; scan all string

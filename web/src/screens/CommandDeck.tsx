@@ -193,7 +193,15 @@ export function CommandDeck() {
           {CHIPS.map((chip) => (
             <span
               key={chip}
+              role="button"
+              tabIndex={0}
               onClick={() => setQuery(chip)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setQuery(chip);
+                }
+              }}
               style={{
                 cursor: "pointer",
                 border: "1px solid rgba(0,255,0,0.3)",

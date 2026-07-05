@@ -9,7 +9,7 @@ const FALLBACK_CHIPS = ["all", "asset", "account", "document", "vehicle", "prope
 
 function statusColor(status: string): string {
   if (status === "compiled") return C.greenSoft;
-  if (status === "needs_review") return C.amber;
+  if (status === "needs-review") return C.amber;
   return C.dim;
 }
 

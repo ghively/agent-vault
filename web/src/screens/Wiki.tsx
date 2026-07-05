@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEntities, useEntity, useEntityRaw, useSchema } from "../api/hooks";
 import { usePatchEntity, useSaveEntityRaw } from "../api/mutations";
 import { recompileEntity } from "../api/jobs";
+import { useFocusTrap } from "../ui/useFocusTrap";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { EntityDetail, EntityPatchBody, EntityRow, FactRow, LinkRow } from "../api/types";
 
@@ -10,20 +11,31 @@ import type { EntityDetail, EntityPatchBody, EntityRow, FactRow, LinkRow } from 
 
 function statusBg(status: string): string {
   if (status === "compiled") return "rgba(0,255,0,0.12)";
-  if (status === "needs_review") return "rgba(255,189,46,0.15)";
+  if (status === "needs-review") return "rgba(255,189,46,0.15)";
   return "rgba(136,136,136,0.15)";
 }
 
 function statusColor(status: string): string {
   if (status === "compiled") return C.greenSoft;
-  if (status === "needs_review") return C.amber;
+  if (status === "needs-review") return C.amber;
   return C.dim;
 }
 
 function statusLabel(status: string): string {
   if (status === "compiled") return "compiled";
-  if (status === "needs_review") return "needs review";
+  if (status === "needs-review") return "needs review";
   return status;
+}
+
+/** onKeyDown handler that fires `fn` on Enter/Space, so div-based controls
+ *  (role="button") are operable by keyboard, not just mouse. */
+function onActivate(fn: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fn();
+    }
+  };
 }
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -125,7 +137,11 @@ function IndexPane({
         <div key={type}>
           {/* group header */}
           <div
+            role="button"
+            tabIndex={0}
+            aria-expanded={isOpen(type)}
             onClick={() => toggleGroup(type)}
+            onKeyDown={onActivate(() => toggleGroup(type))}
             style={{
               display: "flex",
               alignItems: "center",
@@ -157,7 +173,10 @@ function IndexPane({
               return (
                 <div
                   key={item.slug}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setDetailSlug(item.slug)}
+                  onKeyDown={onActivate(() => setDetailSlug(item.slug))}
                   style={{
                     padding: "8px 11px",
                     borderRadius: 7,
@@ -241,9 +260,16 @@ function LinksSection({
         return (
           <div
             key={i}
+            role={canNav ? "button" : undefined}
+            tabIndex={canNav ? 0 : undefined}
             onClick={
               canNav
                 ? () => setDetailSlug(l.ref.split("/").pop() ?? l.ref)
+                : undefined
+            }
+            onKeyDown={
+              canNav
+                ? onActivate(() => setDetailSlug(l.ref.split("/").pop() ?? l.ref))
                 : undefined
             }
             style={{
@@ -348,6 +374,10 @@ export function Wiki() {
       queryClient.invalidateQueries({ queryKey: ["entity", detailSlug] });
       queryClient.invalidateQueries({ queryKey: ["entities"] });
       queryClient.invalidateQueries({ queryKey: ["status"] });
+      // A recompile can flip status out of needs-review, so refresh the review
+      // queue + the settings overview too (mirrors Pipeline's compile path).
+      queryClient.invalidateQueries({ queryKey: ["review"] });
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (e) {
       setRecompileError(e instanceof Error ? e.message : "recompile failed");
     } finally {
@@ -733,6 +763,10 @@ function EditDetailsModal({ detail, onClose }: { detail: EntityDetail; onClose: 
   const { data: entitiesData } = useEntities();
   const patch = usePatchEntity();
   const titleRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Trap Tab focus inside the dialog (it declares aria-modal). Matches the Creds
+  // modal; without it Tab escapes to the windows behind the overlay.
+  useFocusTrap(dialogRef);
 
   // The detail response does not reliably carry tags/notes today: fall back to
   // the entities-list row for tags (EntityRow has them) and to a "notes" fact.
@@ -778,6 +812,7 @@ function EditDetailsModal({ detail, onClose }: { detail: EntityDetail; onClose: 
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Edit details for ${detail.slug}`}

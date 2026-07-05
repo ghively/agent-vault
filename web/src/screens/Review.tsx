@@ -4,6 +4,7 @@ import {
   useApproveProposal, useRejectProposal, useApproveEntity, useRejectEntity,
   useReclassifyEntity,
 } from "../api/mutations";
+import { useFocusTrap } from "../ui/useFocusTrap";
 import { C, FONT_MONO } from "../theme";
 import type { ReviewEntity, Proposal } from "../api/types";
 
@@ -368,6 +369,10 @@ function ReclassifyModal({ entity, mutation, onClose, onDone }: ReclassifyModalP
   const [toSubtype, setToSubtype] = useState("");
   const [reason, setReason] = useState("");
   const typeRef = useRef<HTMLSelectElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Trap Tab focus inside the dialog (it declares aria-modal). Matches the Creds
+  // modal; without it Tab escapes to the windows behind the overlay.
+  useFocusTrap(dialogRef);
 
   // Escape closes; initial focus lands on the type select (Creds modal conventions).
   useEffect(() => {
@@ -404,6 +409,7 @@ function ReclassifyModal({ entity, mutation, onClose, onDone }: ReclassifyModalP
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Reclassify ${entity.ref}`}

@@ -3,9 +3,13 @@
 POST /api/review/proposals/{pid}/approve|reject — Approve or reject a queued proposal
 POST /api/review/entities/{ref:path}/approve|reject — Approve or reject a needs-review entity
 
-All endpoints mirror SynapseNAS server/actions.py shapes but run in-process,
-wrapping the corresponding agent_vault.review operations under the vault-wide
-write lock. Approvals trigger a reindex to keep the search index current.
+All endpoints mirror SynapseNAS server/actions.py shapes but run in-process.
+The underlying agent_vault.review operations take the vault-wide write lock
+themselves, so these handlers must NOT wrap them in a second lock (flock is not
+re-entrant across two open()s in one process — an outer lock self-deadlocks).
+The one exception is reject_proposal, whose cmd_reject does not lock, so its
+handler holds the lock. Approvals/rejections trigger a reindex afterward to
+keep the search index current.
 
 Security: Imports ONLY from the trusted agent_vault package. NEVER inserts
 AGENT_VAULT_PATH or the vault data dir onto sys.path, and NEVER imports a module
@@ -85,24 +89,27 @@ async def approve_proposal(
     reason = reason_req.reason or ""
 
     try:
-        # Acquire vault-wide write lock for the approval
-        with vault_lock(str(vault)):
-            # Call the review module's approve function in-process
-            # Note: cmd_approve returns int exit code, so we convert to dict
-            exit_code = review_module.cmd_approve(  # type: ignore[no-untyped-call]
-                str(vault), pid, reason
-            )
+        # NOTE: no outer vault_lock here. review.cmd_approve takes the vault
+        # write lock itself (in each mutating branch; the reclassify branch
+        # delegates to apply_all, which also locks). flock is NOT re-entrant
+        # across two open()s in one process, so an outer lock would self-deadlock
+        # until the lock timeout (default 600s) and then 503. Same posture as
+        # creds.py:recompile / edit.py:reclassify.
+        exit_code = review_module.cmd_approve(  # type: ignore[no-untyped-call]
+            str(vault), pid, reason
+        )
 
-            # Trigger reindex after successful approval
-            from agent_vault.ingest import refresh_index
-            refresh_index(str(vault))  # type: ignore[no-untyped-call]
+        # Rebuild the search index after the mutation. build_index is a reader
+        # (it does not take the write lock), so running it unlocked here is safe.
+        from agent_vault.ingest import refresh_index
+        refresh_index(str(vault))  # type: ignore[no-untyped-call]
 
-            return {
-                "ok": exit_code == 0,
-                "code": exit_code,
-                "stdout": "",
-                "stderr": ""
-            }
+        return {
+            "ok": exit_code == 0,
+            "code": exit_code,
+            "stdout": "",
+            "stderr": ""
+        }
 
     except SystemExit as e:
         # review.cmd_approve uses sys.exit on errors
@@ -213,23 +220,23 @@ async def approve_entity(
     reason = reason_req.reason or ""
 
     try:
-        # Acquire vault-wide write lock for the approval
-        with vault_lock(str(vault)):
-            # Call the review module's approve_entity function in-process
-            exit_code = review_module.cmd_approve_entity(  # type: ignore[no-untyped-call]
-                str(vault), ref, reason
-            )
+        # No outer vault_lock: cmd_approve_entity takes the write lock itself.
+        # An outer lock would self-deadlock (flock is not re-entrant across two
+        # open()s in one process). See approve_proposal for the full rationale.
+        exit_code = review_module.cmd_approve_entity(  # type: ignore[no-untyped-call]
+            str(vault), ref, reason
+        )
 
-            # Trigger reindex after successful approval
-            from agent_vault.ingest import refresh_index
-            refresh_index(str(vault))  # type: ignore[no-untyped-call]
+        # Rebuild the search index after the mutation (reader, safe unlocked).
+        from agent_vault.ingest import refresh_index
+        refresh_index(str(vault))  # type: ignore[no-untyped-call]
 
-            return {
-                "ok": exit_code == 0,
-                "code": exit_code,
-                "stdout": "",
-                "stderr": ""
-            }
+        return {
+            "ok": exit_code == 0,
+            "code": exit_code,
+            "stdout": "",
+            "stderr": ""
+        }
 
     except SystemExit as e:
         # review.cmd_approve_entity uses sys.exit on errors
@@ -279,19 +286,25 @@ async def reject_entity(
     reason = reason_req.reason or ""
 
     try:
-        # Acquire vault-wide write lock for the rejection
-        with vault_lock(str(vault)):
-            # Call the review module's reject_entity function in-process
-            exit_code = review_module.cmd_reject_entity(  # type: ignore[no-untyped-call]
-                str(vault), ref, reason
-            )
+        # No outer vault_lock: cmd_reject_entity takes the write lock itself.
+        # An outer lock would self-deadlock (flock is not re-entrant across two
+        # open()s in one process). See approve_proposal for the full rationale.
+        exit_code = review_module.cmd_reject_entity(  # type: ignore[no-untyped-call]
+            str(vault), ref, reason
+        )
 
-            return {
-                "ok": exit_code == 0,
-                "code": exit_code,
-                "stdout": "",
-                "stderr": ""
-            }
+        # Rejection flips the entity's status to `archived`, so rebuild the
+        # index to keep review/status/search current (mirrors approve_entity;
+        # build_index is a reader, safe to run unlocked).
+        from agent_vault.ingest import refresh_index
+        refresh_index(str(vault))  # type: ignore[no-untyped-call]
+
+        return {
+            "ok": exit_code == 0,
+            "code": exit_code,
+            "stdout": "",
+            "stderr": ""
+        }
 
     except SystemExit as e:
         # review.cmd_reject_entity uses sys.exit on errors

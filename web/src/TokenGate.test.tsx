@@ -11,7 +11,7 @@ function resetAuth() {
   useAuth.setState({ token: null });
 }
 
-function mockHealth(status: number) {
+function mockProbe(status: number) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
     return { ok: status >= 200 && status < 300, status } as Response;
   });
@@ -39,21 +39,25 @@ describe("TokenGate", () => {
     expect(screen.queryByText(/Enter your vault token/i)).not.toBeInTheDocument();
   });
 
-  it("mounts the app after a valid token validates against /api/health", async () => {
-    const spy = mockHealth(200);
+  it("mounts the app after a valid token validates against the API", async () => {
+    const spy = mockProbe(200);
     render(<TokenGate><div>SECRET APP</div></TokenGate>);
     await enterToken("good-token");
     await waitFor(() => expect(screen.getByText("SECRET APP")).toBeInTheDocument());
-    // token stored + health probe carried the bearer header
+    // token stored + probe carried the bearer header
     expect(useAuth.getState().token).toBe("good-token");
-    const [, init] = spy.mock.calls[0];
+    const [url, init] = spy.mock.calls[0];
+    // Must probe an AUTHENTICATED endpoint — /api/health is open and would
+    // accept any token, so validating against it is a no-op.
+    expect(String(url)).toContain("/api/status");
+    expect(String(url)).not.toContain("/api/health");
     expect((init as RequestInit).headers).toMatchObject({
       Authorization: "Bearer good-token",
     });
   });
 
   it("reports a 401 as an invalid token and does not mount", async () => {
-    mockHealth(401);
+    mockProbe(401);
     render(<TokenGate><div>SECRET APP</div></TokenGate>);
     await enterToken("bad-token");
     await waitFor(() => expect(screen.getByText(/Invalid token/i)).toBeInTheDocument());
@@ -62,7 +66,7 @@ describe("TokenGate", () => {
   });
 
   it("reports a 403 as valid-but-unauthorized", async () => {
-    mockHealth(403);
+    mockProbe(403);
     render(<TokenGate><div>APP</div></TokenGate>);
     await enterToken("scoped-token");
     await waitFor(() =>
@@ -70,7 +74,7 @@ describe("TokenGate", () => {
   });
 
   it("reports an unexpected status code", async () => {
-    mockHealth(500);
+    mockProbe(500);
     render(<TokenGate><div>APP</div></TokenGate>);
     await enterToken("tok");
     await waitFor(() =>

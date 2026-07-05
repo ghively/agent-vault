@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRuns, useLedgers } from "../api/hooks";
-import { startJob, streamJob } from "../api/jobs";
+import { startJob, streamJob, cancelJob } from "../api/jobs";
 import { C, FONT_MONO, FONT_UI } from "../theme";
 import type { Run } from "../api/types";
 
@@ -77,6 +77,7 @@ export function Pipeline() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  const currentJobIdRef = useRef<string | null>(null);
   const cancelledRef = useRef(false);
   // Abort any in-flight stream when the window/component unmounts so the fetch
   // doesn't keep running in the background (F2).
@@ -115,7 +116,9 @@ export function Pipeline() {
         if (ops.length > 1) append(`── stage: ${op} ──`);
         armStall();
         const id = await startJob(op, []);
+        currentJobIdRef.current = id;
         const res = await streamJob(id, append, ctrl.signal);
+        currentJobIdRef.current = null;
         if (!mountedRef.current) return;
         setJobRc(res.rc);
         if (res.state !== "done" || (res.rc ?? 1) !== 0) {
@@ -124,6 +127,9 @@ export function Pipeline() {
             setErrorMsg(cancelledRef.current
               ? `run cancelled at stage "${op}"`
               : `stage "${op}" stalled (no output for ${STALL_MS / 1000}s) — aborted`);
+          } else if (res.message) {
+            // Transport/auth failure (e.g. 403 forbidden) — show the reason.
+            setErrorMsg(`${op} failed — ${res.message}`);
           } else {
             setErrorMsg(
               ops.length > 1
@@ -142,6 +148,7 @@ export function Pipeline() {
     } finally {
       clearTimeout(stallTimer);
       abortRef.current = null;
+      currentJobIdRef.current = null;
       if (mountedRef.current) setRunning(false);
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["ledgers"] });
@@ -149,12 +156,19 @@ export function Pipeline() {
       // the dashboard/review-driven queries too, not just runs/ledgers.
       qc.invalidateQueries({ queryKey: ["status"] });
       qc.invalidateQueries({ queryKey: ["review"] });
+      // The settings overview echoes entity_count / index_built, which a run
+      // changes — refresh it too.
+      qc.invalidateQueries({ queryKey: ["settings"] });
     }
   }
 
   function handleCancel() {
     cancelledRef.current = true;
     abortRef.current?.abort();
+    // Aborting only stops the client reading the stream; tell the server to
+    // terminate the subprocess too, otherwise it runs to completion.
+    const id = currentJobIdRef.current;
+    if (id) void cancelJob(id);
   }
 
   function handleRunWeekly() {

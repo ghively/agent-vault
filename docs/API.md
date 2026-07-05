@@ -25,7 +25,7 @@ private.
 
 ## Configuration (environment variables)
 
-Read once at startup by `Settings.from_env()` (`agent_vault/api/config.py:29-47`):
+Read once at startup by `Settings.from_env()` (`agent_vault/api/config.py:31-58`):
 
 | Env var | Default | Purpose |
 |---|---|---|
@@ -129,7 +129,7 @@ All paths below are prefixed `/api` unless noted. "Auth" = gated by
 | GET | `/api/config` | yes* | Runtime pipeline config: `{"env": {...}, "thresholds": {...}, "resolvers": [{"name","detail"}]}` (see shapes below) |
 | POST | `/api/config/apply` | yes* | Apply allowlisted env changes. Body: `{"env"?: {...}, "thresholds"?: {...}}` → same shape as `GET /api/config`. Unknown env keys / invalid values / any `thresholds` → `400` |
 | GET | `/docs`, `/redoc`, `/openapi.json` | no | FastAPI's auto-generated Swagger UI / ReDoc / OpenAPI schema |
-| GET | `/assets/*` | no | Built SPA static assets, served only if both `web/dist` and `web/dist/assets` exist (`app.py:56-60`) |
+| GET | `/assets/*` | no | Built SPA static assets, served only if both `web/dist` and `web/dist/assets` exist (`app.py:79-83`) |
 | GET | `/{full_path}` | no | SPA fallback → `web/dist/index.html` (client-side routing) |
 
 \* only when `VAULT_TOKEN` is non-empty. `/api/health` is never gated.
