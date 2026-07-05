@@ -127,21 +127,21 @@ tokens:
       - {vault: "*", scopes: [admin]}    # all vaults, all scopes
 
   # Gregory's self-minted token. Minimal scope ceiling by default.
-  gregory-<random>:
+  # NOTE: tokens are stored HASHED in this file (sha256); 1P holds plaintext.
+  gregory-<hash>:
     actor: gregory
     grants:
-      - {vault: gregory, scopes: [read, write, resolve]}   # own enclave
+      - {vault: gregory, scopes: [read, write, resolve]}   # own enclave only
       - {vault: household, scopes: [read]}                  # shared read (auto)
-      # Gene added these manually:
-      - {vault: household, scopes: [write]}                 # Gregory maintains household
-      - {vault: kevin, scopes: [read]}                      # cross-read for drift detect
+      # NO write on household — household is a separate, dedicated enclave
+      # (see §5.4). Gregory maintains its own KB, not household.
 
   # Kevin's token.
-  kevin-<random>:
+  kevin-<hash>:
     actor: kevin
     grants:
       - {vault: kevin, scopes: [read, write, resolve]}
-      - {vault: household, scopes: [read, write]}
+      - {vault: household, scopes: [read]}
 ```
 
 ### 4.4 Secret entities + grants
@@ -203,6 +203,40 @@ dependency that replaces the current `create_auth_dependency`. It resolves
 the token → identity → grants, then checks the request's target vault (from
 `X-Vault` header or `/api/vaults/<name>/` path prefix) against the grants.
 No endpoint checks scopes itself — the dependency is the only gate.
+
+### 5.4 Household is a dedicated enclave (Gene's design decision)
+
+Household is **not** a shared write surface that agents maintain. It is the
+sensitive core — the reason the vault was built — and stands separate from
+per-agent KBs:
+
+- **Household** (`household/`) is curated by a **dedicated household agent**
+  (or by Gene directly). It holds the sensitive family knowledge and
+  credential refs that are the vault's primary purpose. Agent KBs do NOT
+  write to it.
+- **Per-agent KBs** (`gregory/`, `kevin/`, etc.) are each agent's private
+  working space — their own research, notes, state, scratch knowledge. They
+  are peers to household, not subordinates that merge into it.
+- Agents get **read** on household by default (so they can reference shared
+  facts, look up accounts, resolve shared secrets they're granted), but
+  **never write** unless Gene explicitly grants it for a specific role.
+
+This means the self-mint ceiling (§5.2) grants `read` on household only —
+no agent gets household `write` through self-service. The household agent
+itself is provisioned with an explicit `write` grant by Gene.
+
+The Librarian (Phase 3) reads across all enclaves including household but
+writes only to `unified/` — it never merges agent KBs into household.
+
+### 5.5 Resolved design decisions (Gene, 2026-07-05)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Token storage | **Hashed** (sha256) in tokens.yaml; 1P holds plaintext | File read doesn't leak tokens; 1P is recovery path. Avoid bcrypt (lookup must scan all entries; sha256 is fine since tokens are high-entropy 40+ chars). |
+| Delegation depth | **Flat** — only bootstrap + vault-admin tokens can mint | Prevents privilege sprawl. Revisit only if a real supervisor-agent use case emerges. |
+| Agent-authored secrets | **Configurable**, default OFF (`MTAV_REQUIRE_SECRET_APPROVAL=0`) | Auto-approve + rate-limit + audit-flag for trusted agents (Gregory, Kevin). Flip ON when onboarding less-trusted agents. |
+| Household write access | **Dedicated enclave** — agents get read only; a separate household agent (or Gene) curates it | Household is the sensitive core, not a shared write surface. See §5.4. |
+| Enrollment secret rotation | **On-demand only** (no fixed cadence) | Minimal-scope ceiling means a leaked enroll secret only produces empty private enclaves — low blast radius. Rotation adds operational complexity for little gain. |
 
 ---
 
@@ -615,25 +649,19 @@ to a test in the Phase 1+2 test suite.
 
 ---
 
-## 14. Open Questions for MoA Review
+## 14. Open Questions — RESOLVED (2026-07-05, Gene)
 
-1. **Scope ceiling completeness:** Is the self-mint ceiling (§5.2) airtight?
-   Can an agent escalate via any endpoint, grant, or control-plane path?
-2. **Backward compat:** Does defaulting no-header requests to `household`
-   (§6.4) preserve the existing Hermes + UI clients through migration?
-3. **Threat model gaps:** What threats are missing from §11?
-4. **Secret-store gating:** Is rate-limit + audit-flag (§7.2) sufficient, or
-   should agent secret-creation be fully propose→promote by default?
-5. **Token storage:** Plaintext in tokens.yaml vs hashed — what's the right
-   tradeoff for a homelab? (Hashed means no recovery if tokens.yaml is lost;
-   plaintext means a file read = full compromise.)
-6. **Librarian feasibility:** Does the data model (§4 + §8a) actually enable
-   the Phase 3 librarian without a rewrite?
-7. **Delegation chains:** Should `admin`-on-vault tokens be able to mint
-   further tokens, and if so, how deep? (Unbounded delegation = privilege
-   sprawl; no delegation = manual provisioning burden.)
-8. **Cross-vault search performance:** Fan-out FTS across N vaults — at what
-   N does this get slow, and is it acceptable for a homelab scale (≤10)?
+All open questions from the draft have been resolved. See §5.5 for the
+decision table. Summary:
+
+1. ~~Scope ceiling completeness~~ → SI-1..SI-8 (§11.0) close all paths.
+2. ~~Backward compat~~ → §6.1 unified rule (no contradiction).
+3. ~~Threat model gaps~~ → §11.0 + §11.1 threat table expanded.
+4. ~~Secret-store gating~~ → **Configurable, default OFF** (§5.5).
+5. ~~Token storage~~ → **Hashed (sha256), 1P holds plaintext** (§5.5).
+6. ~~Librarian feasibility~~ → Data model (§4 + §8a) enables it without rewrite.
+7. ~~Delegation chains~~ → **Flat** (§5.5): bootstrap + vault-admin only.
+8. ~~Cross-vault search performance~~ → Acceptable at homelab scale (≤10 vaults).
 
 ---
 
