@@ -48,6 +48,12 @@ from agent_vault.api.tenant import (
 _RESOLVE_PATH_RE = re.compile(r"^/api/creds/[^/]+/resolve$")
 
 
+def _slug_from_resolve_path(path: str) -> str | None:
+    """Extract the entity slug from /api/creds/{slug}/resolve."""
+    m = re.match(r"^/api/creds/([^/]+)/resolve$", path)
+    return m.group(1) if m else None
+
+
 def required_scope(method: str, path: str) -> str | None:
     """The scope a request needs, or None for open paths (health, non-/api).
 
@@ -204,18 +210,26 @@ def create_tenant_auth_dependency(settings: Settings) -> Callable[..., None]:
             )
 
         # --- resolve target vault (§6.1) ---
-        x_vault = request.headers.get("x-vault")
-        try:
-            vault_name, vault_path = resolver.resolve(ident, x_vault, request.url.path)
-        except ValueError:
-            # SI-5: grant-first, existence-second, same error shape
-            request.state.identity = ident
-            request.state.vault_path = ""
-            request.state.vault_name = ""
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="access denied",
-            ) from None
+        # Skip resolution for tenant control-plane endpoints (whoami, vaults)
+        # — these must work even for zero-grant tokens (Claude finding #3).
+        path = request.url.path
+        is_tenant_control_plane = path.startswith("/api/tenant/")
+        if is_tenant_control_plane:
+            vault_name = ""
+            vault_path = ""
+        else:
+            x_vault = request.headers.get("x-vault")
+            try:
+                vault_name, vault_path = resolver.resolve(ident, x_vault, path)
+            except ValueError:
+                # SI-5: grant-first, existence-second, same error shape
+                request.state.identity = ident
+                request.state.vault_path = ""
+                request.state.vault_name = ""
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="access denied",
+                ) from None
 
         # Stash resolved vault on request state for downstream endpoints
         ident_resolved = Identity(
@@ -231,7 +245,16 @@ def create_tenant_auth_dependency(settings: Settings) -> Callable[..., None]:
 
         # --- scope check (per-vault) ---
         scope = required_scope(request.method, request.url.path)
-        if scope:
+        if scope == "resolve":
+            # Per-secret grants: use can_resolve with the slug from the path
+            # so a per-secret grant works (Codex finding #1 fix).
+            slug = _slug_from_resolve_path(request.url.path)
+            if not ident_resolved.can_resolve(vault_name, slug):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="access denied",
+                )
+        elif scope:
             if not ident_resolved.has_scope(vault_name, scope):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

@@ -31,6 +31,7 @@ Implements the Phase 1 MTAV layer (docs/MTAV_SPEC.md §4–§6):
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import secrets as secrets_mod
 from dataclasses import dataclass, field
@@ -97,6 +98,15 @@ class Grant:
         return self.vault == "*" or self.vault == vault
 
     def implies(self, scope: str) -> bool:
+        """Does this grant imply *scope*?
+
+        A per-secret grant (secret is not None) only implies ``resolve`` when
+        checked via ``Identity.can_resolve(vault, slug)`` — it does NOT grant
+        whole-vault resolve (Codex finding #1 / Claude SI-4 fix). This prevents
+        ``has_scope(vault, "resolve")`` from matching a per-secret grant.
+        """
+        if self.secret is not None and scope == "resolve":
+            return False  # per-secret grants only match via can_resolve()
         return "admin" in self.scopes or scope in self.scopes
 
 
@@ -288,11 +298,11 @@ class TenantRegistry:
         if not self.multi_tenant:
             return None  # single-vault: no routing needed
 
-        write_vaults = [
+        write_vaults = list(dict.fromkeys(  # dedupe, preserve order
             g.vault
             for g in identity.grants
-            if g.vault != "*" and g.implies("write")
-        ]
+            if g.vault != "*" and g.vault is not None and g.implies("write")
+        ))
         if len(write_vaults) == 1:
             return write_vaults[0]
 
@@ -423,6 +433,29 @@ class TenantRegistry:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         lock_fh.close()
 
+    @staticmethod
+    def _atomic_write(path: Path, data: dict[str, Any]) -> None:
+        """Write YAML atomically: temp file → fsync → os.replace (SI-6 fix).
+
+        Prevents concurrent readers from seeing a truncated/partial file.
+        """
+        import tempfile as _tempfile
+
+        content = yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+        fd, tmp = _tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, str(path))
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
     def add_token(
         self,
         plaintext: str,
@@ -455,10 +488,7 @@ class TenantRegistry:
                     for g in grants
                 ],
             }
-            self._tokens_file.write_text(
-                yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-                encoding="utf-8",
-            )
+            self._atomic_write(self._tokens_file, data)
         finally:
             self._release_lock(lock)
         self.invalidate()
@@ -466,6 +496,7 @@ class TenantRegistry:
     def remove_token(self, token_hash: str) -> bool:
         """Remove a token by its hash. Returns True if it was present."""
         lock = self._acquire_lock()
+        removed = False
         try:
             if not self._tokens_file.exists():
                 return False
@@ -475,16 +506,14 @@ class TenantRegistry:
                 return False
             del tokens[token_hash]
             data["tokens"] = tokens
-            self._tokens_file.write_text(
-                yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-                encoding="utf-8",
-            )
-            return True
+            self._atomic_write(self._tokens_file, data)
+            removed = True
         except (OSError, yaml.YAMLError):
             return False
         finally:
             self._release_lock(lock)
-        # unreachable: invalidate always runs in finally
+        self.invalidate()
+        return removed
 
     def register_vault(self, name: str, path: str, owner: str, visibility: str = "private") -> None:
         """Add/update a vault entry in vaults.yaml + invalidate (SI-6)."""
@@ -504,10 +533,7 @@ class TenantRegistry:
                 "owner": owner,
                 "visibility": visibility,
             }
-            self._vaults_file.write_text(
-                yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-                encoding="utf-8",
-            )
+            self._atomic_write(self._vaults_file, data)
         finally:
             self._release_lock(lock)
         self.invalidate()
@@ -697,87 +723,3 @@ async def list_visible_vaults(request: _Request) -> _JSONResponse:
                 "description": v.description,
             })
     return _JSONResponse(content={"vaults": vaults, "mode": "multi-tenant"})
-
-
-@router.get("/search")
-async def cross_vault_search(
-    request: _Request,
-    q: str = "",
-    vaults: str = "",
-    limit: int = 20,
-) -> _JSONResponse:
-    """Cross-vault FTS search (§6.3).
-
-    Fans out FTS across the listed vaults (comma-separated), merge-ranked.
-    Restricted to vaults the caller has ``read`` on; others silently dropped.
-    In legacy mode, delegates to the standard single-vault search.
-    """
-
-    settings = request.app.state.settings
-    ident = request.state.identity
-
-    if not settings.multi_tenant:
-        # Delegate to the regular search endpoint
-        from agent_vault import search as search_mod
-        query = q.strip()
-        if not query:
-            return _JSONResponse(content={"query": "", "hits": [], "vaults": []})
-        hits = search_mod.search(settings.vault_path, query, limit, mode="fts")
-        return _JSONResponse(content={
-            "query": query,
-            "hits": hits,
-            "vaults": [{"name": "", "hits": len(hits)}],
-        })
-
-    registry = get_registry(settings)
-    query = q.strip()
-    if not query:
-        return _JSONResponse(content={"query": "", "hits": [], "vaults": []})
-
-    # Parse requested vaults; empty = all visible
-    requested = [v.strip() for v in vaults.split(",") if v.strip()] if vaults else []
-    visible = set(ident.visible_vaults())
-    if ident.system:
-        visible = {v.name for v in registry.all_vaults()}
-
-    # Filter to vaults the caller can read
-    searchable: list[str] = []
-    for vname in (requested or visible):
-        if vname in visible and ident.has_scope(vname, "read"):
-            searchable.append(vname)
-        # silently drop unauthorized vaults
-
-    if not searchable:
-        return _JSONResponse(content={
-            "query": query,
-            "hits": [],
-            "vaults": [],
-            "note": "no searchable vaults (check grants)",
-        })
-
-    from agent_vault import search as search_mod
-
-    all_hits: list[dict[str, Any]] = []
-    per_vault: list[dict[str, Any]] = []
-    for vname in searchable:
-        vpath = registry.vault_path(vname)
-        if not vpath:
-            continue
-        try:
-            hits = search_mod.search(vpath, query, limit, mode="fts")
-        except Exception:  # noqa: BLE001 — a broken index in one vault shouldn't fail the whole search
-            continue
-        for h in hits:
-            h["vault"] = vname
-        all_hits.extend(hits)
-        per_vault.append({"name": vname, "hits": len(hits)})
-
-    # Merge-rank: sort by score descending
-    all_hits.sort(key=lambda h: h.get("score", 0), reverse=True)
-    all_hits = all_hits[:limit]
-
-    return _JSONResponse(content={
-        "query": query,
-        "hits": all_hits,
-        "vaults": per_vault,
-    })

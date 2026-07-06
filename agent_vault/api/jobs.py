@@ -220,7 +220,9 @@ def _check_job_vault_access(job: Job, request: Request) -> None:
         return
     if not job.vault:
         return  # job created before MTAV — no ownership to check
-    if not ident.has_scope(job.vault, "read"):  # type: ignore[attr-defined]
+    if not ident.has_scope(job.vault, "read") and not any(
+        g.matches_vault(job.vault) for g in ident.grants
+    ):
         # SI-5: return 403 with a generic message (no existence oracle)
         raise HTTPException(status_code=403, detail="access denied")
 
