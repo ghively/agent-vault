@@ -28,3 +28,6 @@ web/dist/
 web/tsconfig.tsbuildinfo
 # Runtime lock artifact (created by agent_vault.locking; safe to leave alone)
 registry/_vault.lock
+# Environment files (may contain secrets — never commit)
+.env
+.env.*

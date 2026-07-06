@@ -1,0 +1,17 @@
+---
+subtype: integration
+tags:
+- hermes
+- agent-vault
+- integration
+title: Hermes wired to Agent Vault
+type: decision
+---
+
+    Integrated Hermes and its subagent swarm with Agent Vault as the
+    centralized knowledge and credential source. Created skill
+    agent-vault-integration with hermes_tools functions: vault_search,
+    vault_lookup, vault_resolve_credential, vault_store, and
+    vault_context_for_delegation. All credential resolution now goes
+    through the vault (1P proxy) instead of direct op calls.
+    
