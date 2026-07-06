@@ -20,6 +20,7 @@ from agent_vault.api import reads
 from agent_vault.api import review
 from agent_vault.api import settings as settings_api
 from agent_vault.api import status as status_api
+from agent_vault.api import tenant as tenant_api
 from agent_vault.api import vault_config
 
 
@@ -54,6 +55,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     # Attribution trail: audit every mutating/resolve /api call with the caller's
     # resolved actor (never bodies/secrets). See agent_vault/api/audit.py.
+    # The middleware reads the per-request resolved vault from ASGI scope state
+    # (MTAV), falling back to the static vault_path (legacy).
     app.add_middleware(AuditMiddleware, vault_path=settings.vault_path)
 
     # Deliberately unauthenticated: LB/orchestrator liveness probes can't send
@@ -73,6 +76,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(settings_api.router, prefix="/api", dependencies=api_deps)
     app.include_router(status_api.router, prefix="/api", dependencies=api_deps)
     app.include_router(vault_config.router, prefix="/api", dependencies=api_deps)
+    # MTAV tenant control-plane (whoami, vaults listing — read-only in Phase 1)
+    app.include_router(tenant_api.router, prefix="/api", dependencies=api_deps)
 
     # Serve the built vault UI (web/dist) when present — open (no auth) so a
     # browser can load it; the UI's token gate handles /api authorization.

@@ -55,8 +55,13 @@ PATCHABLE_FIELDS = ("title", "tags", "notes")
 
 
 async def get_settings(request: Request) -> Settings:
-    """Get settings from app state (dependency injection)."""
-    return request.app.state.settings  # type: ignore
+    """Get settings, with resolved vault_path from request state (MTAV)."""
+    s = request.app.state.settings  # type: ignore
+    vault_path = getattr(request.state, "vault_path", "") or ""
+    if vault_path and vault_path != s.vault_path:
+        from dataclasses import replace
+        return replace(s, vault_path=vault_path)
+    return s
 
 
 def _valid_slug(s: str) -> bool:

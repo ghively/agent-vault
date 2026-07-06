@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse as SSEEventSourceResponse
 from pydantic import BaseModel
@@ -118,11 +118,16 @@ class Job:
     stdout/stderr are bounded deques (last MAX_LOG_LINES lines each);
     stdout_seen/stderr_seen count every line ever appended so streaming
     consumers can detect new output even after old lines are evicted.
+
+    ``vault`` is the vault name this job runs against (MTAV §6a.1a). It's set
+    at creation time and used by GET/DELETE/stream to enforce that only the
+    job's owner (a token with any grant on that vault) can access it.
     """
 
     id: str
     op: str
     args: list[str]
+    vault: str = ""  # MTAV: which vault this job belongs to
     proc: asyncio.subprocess.Process | None = None
     status: str = "pending"  # pending, running, completed, failed
     returncode: int | None = None
@@ -163,19 +168,20 @@ class JobRegistry:
         for job in finished[:excess] if excess > 0 else []:
             self.jobs.pop(job.id, None)
 
-    def create(self, op: str, args: list[str]) -> Job:
+    def create(self, op: str, args: list[str], vault: str = "") -> Job:
         """Create a new job entry, evicting old finished jobs first.
 
         Args:
             op: Operation name (must be in ALLOWED_OPS)
             args: Command-line arguments for the operation
+            vault: Vault name this job runs against (MTAV ownership)
 
         Returns:
             Created Job instance
         """
         self._evict_finished()
         job_id = uuid.uuid4().hex[:12]
-        job = Job(id=job_id, op=op, args=args)
+        job = Job(id=job_id, op=op, args=args, vault=vault)
         self.jobs[job_id] = job
         return job
 
@@ -193,6 +199,33 @@ class JobRegistry:
 
 # Global registry instance
 _registry = JobRegistry()
+
+# Strong references to in-flight job tasks. asyncio keeps only a WEAK reference
+
+
+def _check_job_vault_access(job: Job, request: Request) -> None:
+    """MTAV §6a.1a: verify the caller has a grant on the job's vault.
+
+    In legacy single-vault mode (no ``vault_name`` on request state), this is
+    a no-op. In MTAV mode, the caller's identity must have any grant on
+    ``job.vault``, else 403. System/bootstrap tokens bypass the check.
+    """
+    ident = getattr(request.state, "identity", None)
+    if ident is None:
+        return  # no identity resolved (e.g. auth disabled) — allow
+    # Legacy mode: identity has _legacy_scopes, no per-vault grants → skip
+    if ident._legacy_scopes:  # type: ignore[attr-defined] # noqa: SLF001
+        return
+    if ident.system:  # type: ignore[attr-defined]
+        return
+    if not job.vault:
+        return  # job created before MTAV — no ownership to check
+    if not ident.has_scope(job.vault, "read") and not any(
+        g.matches_vault(job.vault) for g in ident.grants
+    ):
+        # SI-5: return 403 with a generic message (no existence oracle)
+        raise HTTPException(status_code=403, detail="access denied")
+
 
 # Strong references to in-flight job tasks. asyncio keeps only a WEAK reference
 # to a bare create_task() result, so without this a running job can be
@@ -364,20 +397,28 @@ router = APIRouter()
 
 
 async def get_settings(request: Request) -> Settings:
-    """Get settings from app state (dependency injection)."""
-    return request.app.state.settings  # type: ignore
+    """Get settings from app state (dependency injection).
+
+    Returns a Settings with vault_path resolved from request state (MTAV).
+    """
+    s = request.app.state.settings  # type: ignore
+    vault_path = getattr(request.state, "vault_path", "") or ""
+    if vault_path and vault_path != s.vault_path:
+        from dataclasses import replace
+        return replace(s, vault_path=vault_path)
+    return s
 
 
 @router.post("/jobs/run")
 async def run_job_endpoint(
-    request: JobRunRequest,
-    settings: Settings = Depends(get_settings),
+    request: Request,
+    job_request: JobRunRequest,
 ) -> JSONResponse:
     """Start a new job subprocess.
 
     Args:
-        request: Job run request with operation name and arguments
-        settings: Application settings (injected via FastAPI)
+        request: FastAPI request (for resolved vault_path from auth dep)
+        job_request: Job run request with operation name and arguments
 
     Returns:
         JSON response with job_id and initial status
@@ -387,20 +428,26 @@ async def run_job_endpoint(
             is outside the per-op flag/value allowlist
     """
     # Validate operation against allowlist
-    if request.op not in ALLOWED_OPS:
+    if job_request.op not in ALLOWED_OPS:
         raise HTTPException(
             status_code=422,
-            detail=f"Operation {request.op!r} not allowed. Must be one of: {sorted(ALLOWED_OPS)}"
+            detail=f"Operation {job_request.op!r} not allowed. Must be one of: {sorted(ALLOWED_OPS)}"
         )
 
     # Validate args against the per-op allowlist (raises 400)
-    validate_args(request.op, request.args)
+    validate_args(job_request.op, job_request.args)
+
+    # Resolve vault path from request state (set by auth dependency)
+    # In legacy mode, this is settings.vault_path; in MTAV mode, the resolved vault.
+    vault_path_str = getattr(request.state, "vault_path", "") or ""
+    vault_name = getattr(request.state, "vault_name", "") or ""
+    if not vault_path_str:
+        settings = request.app.state.settings
+        vault_path_str = settings.vault_path
+    vault_path = Path(vault_path_str)
 
     registry = get_registry()
-    job = registry.create(request.op, request.args)
-
-    # Get vault path from settings
-    vault_path = Path(settings.vault_path)
+    job = registry.create(job_request.op, job_request.args, vault=vault_name)
 
     # Start job in background, holding a strong reference so the task can't be
     # garbage-collected before it completes (see _background_tasks).
@@ -417,23 +464,28 @@ async def run_job_endpoint(
 
 
 @router.get("/jobs/{job_id}")
-async def get_job_status(job_id: str) -> JSONResponse:
+async def get_job_status(job_id: str, request: Request) -> JSONResponse:
     """Get current status of a job.
 
     Args:
         job_id: Job identifier
+        request: FastAPI request (for identity check, MTAV §6a.1a)
 
     Returns:
         JSON response with status, returncode, and output tails
 
     Raises:
-        HTTPException: 404 if job not found
+        HTTPException: 404 if job not found, 403 if the caller has no grant
+            on the job's vault (MTAV cross-tenant isolation, §6a.1a)
     """
     registry = get_registry()
     job = registry.get(job_id)
 
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    # MTAV §6a.1a: cross-tenant isolation — only the job's owner vault can access it
+    _check_job_vault_access(job, request)
 
     # Return last 100 lines of stdout/stderr to avoid huge responses
     stdout_tail = list(job.stdout)[-100:]
@@ -451,16 +503,20 @@ async def get_job_status(job_id: str) -> JSONResponse:
 
 
 @router.delete("/jobs/{job_id}")
-async def cancel_job(job_id: str) -> JSONResponse:
+async def cancel_job(job_id: str, request: Request) -> JSONResponse:
     """Cancel a running job by terminating its subprocess (B7).
 
     404 if the job is unknown. A job that already finished is returned as-is
     (idempotent — cancelling a completed job is a no-op, not an error).
+
+    MTAV §6a.1a: 403 if the caller has no grant on the job's vault.
     """
     registry = get_registry()
     job = registry.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    _check_job_vault_access(job, request)
 
     if job.status in ("completed", "failed"):
         return JSONResponse(content={"job_id": job.id, "status": job.status,
@@ -488,19 +544,22 @@ async def stream_job(job_id: str, request: Request) -> SSEEventSourceResponse:
 
     Args:
         job_id: Job identifier
-        request: FastAPI request object for disconnect detection
+        request: FastAPI request object for disconnect detection + identity
 
     Returns:
         SSE response with status events
 
     Raises:
-        HTTPException: 404 if job not found
+        HTTPException: 404 if job not found, 403 if caller lacks grant on
+            the job's vault (MTAV §6a.1a)
     """
     registry = get_registry()
     job = registry.get(job_id)
 
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    _check_job_vault_access(job, request)
 
     async def event_generator() -> AsyncIterable[dict[str, str]]:
         """Generate SSE events for job progress.

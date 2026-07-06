@@ -26,8 +26,19 @@ _CRED_RE = re.compile(r"credential_ref:\s*(\S+)")
 
 
 async def get_settings(request: Request) -> Settings:
-    """Get settings from app state (dependency injection)."""
-    return request.app.state.settings  # type: ignore
+    """Get settings from app state (dependency injection).
+
+    In MTAV mode, returns a Settings copy with ``vault_path`` replaced by the
+    per-request resolved vault (set by the auth dependency on request.state).
+    In legacy mode, vault_path comes from request.state too (the auth dep sets
+    it to settings.vault_path), so both paths work identically.
+    """
+    s = request.app.state.settings  # type: ignore
+    vault_path = getattr(request.state, "vault_path", "") or ""
+    if vault_path and vault_path != s.vault_path:
+        from dataclasses import replace
+        return replace(s, vault_path=vault_path)
+    return s
 
 
 def load_index(vault: Path) -> list[dict[str, Any]]:
@@ -177,9 +188,11 @@ async def list_entities(
 
 @router.get("/search")
 async def search_entities(
+    request: Request,
     q: str = Query("", description="free-text query over prose + metadata"),
     limit: int = Query(20, ge=1, le=200),
     mode: str = Query("fts", pattern="^(fts|semantic|hybrid)$"),
+    vaults: str = Query("", description="comma-separated vault names for cross-vault search (MTAV)"),
     s: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Ranked retrieval over entity prose AND metadata.
@@ -190,6 +203,10 @@ async def search_entities(
       - `semantic` — embedding cosine over the vector index (`_vectors.db`,
         built via `python -m agent_vault.semantic build`). Empty if not built.
       - `hybrid` — reciprocal-rank fusion of fts + semantic.
+
+    **MTAV cross-vault**: when ``vaults=`` is passed and multi-tenant mode is
+    active, fans out across the listed vaults (restricted to those the caller
+    has ``read`` on) and merge-ranks results.
 
     Unlike GET /api/entities (a metadata filter), this is the agent-facing
     *retrieval* surface. Returns {query, mode, hits:[{slug,title,type,subtype,
@@ -205,6 +222,39 @@ async def search_entities(
             "semantic": semantic_mod.semantic_available(str(vault))}
     if not query:
         return {"query": "", "mode": mode, "hits": [], **caps}
+
+    # MTAV cross-vault fan-out (§6.3): when vaults= is passed and MTAV is active,
+    # search across the listed vaults restricted to those the caller can read.
+    if vaults and s.multi_tenant:
+        ident = getattr(request.state, "identity", None)
+        from agent_vault.api.tenant import get_registry
+        registry = get_registry(s)
+        requested = [v.strip() for v in vaults.split(",") if v.strip()]
+        visible = set(ident.visible_vaults()) if ident else set()
+        if ident and ident.system:
+            visible = {v.name for v in registry.all_vaults()}
+
+        all_hits: list[dict[str, Any]] = []
+        per_vault: list[dict[str, Any]] = []
+        for vname in requested or visible:
+            if ident is None or vname not in visible or not ident.has_scope(vname, "read"):
+                continue  # silently drop unauthorized
+            vpath = registry.vault_path(vname)
+            if not vpath:
+                continue
+            try:
+                v_hits = search_mod.search(vpath, query, limit, mode="fts")
+            except Exception:  # noqa: BLE001
+                continue
+            for h in v_hits:
+                h["vault"] = vname
+            all_hits.extend(v_hits)
+            per_vault.append({"name": vname, "hits": len(v_hits)})
+
+        all_hits.sort(key=lambda h: h.get("score", 0), reverse=True)
+        return {"query": query, "mode": "fts", "hits": all_hits[:limit],
+                "vaults": per_vault, **caps}
+
     hits = search_mod.search(str(vault), query, limit, mode=mode)
     return {"query": query, "mode": mode, "hits": hits, **caps}
 
