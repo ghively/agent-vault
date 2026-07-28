@@ -97,9 +97,26 @@ def get_entity(vault: str, slug: str) -> dict[str, Any]:
     if not epath.exists():
         return _err("entity file not found")
     try:
-        return _reads.build_entity_detail(vpath, slug, epath)
+        detail = _reads.build_entity_detail(vpath, slug, epath)
     except OSError as e:
         return _err(f"could not read entity: {e}")
+    # Surface extra frontmatter fields (make, model, serial, etc.) that
+    # build_entity_detail doesn't lift into the canonical response shape.
+    # MCP consumers need these to answer real questions ("what's the serial?").
+    try:
+        raw = epath.read_text(encoding="utf-8")
+        import re as _re
+        import yaml as _yaml
+        m = _re.match(r"^---\n(.*?)\n---\n", raw, _re.S)
+        if m:
+            extra_fm = _yaml.safe_load(m.group(1)) or {}
+            known = set(detail.keys()) | {"facts", "links", "notes", "hash"}
+            for k, v in extra_fm.items():
+                if k not in known and k not in ("related",):
+                    detail[k] = v
+    except Exception:  # noqa: BLE001
+        pass
+    return detail
 
 
 def list_entities(vault: str, type_: str = "", limit: int = 100) -> dict[str, Any]:
@@ -203,6 +220,113 @@ def submit_source(vault: str, filename: str, content: str,
     return {"ok": True, "path": rel, "sha256": sha, "bytes": len(data)}
 
 
+
+def create(vault: str, slug: str, type_: str, subtype: str,
+           data: dict[str, Any] | None = None, prose: str = "") -> dict[str, Any]:
+    """Create a new entity from structured data (frontmatter only, no LLM).
+
+    The deterministic write path for structured knowledge — accounts, assets,
+    credentials, anything where the facts are already known and don't need the
+    source-document → ingest → compile pipeline. Validates type/subtype against
+    registry/schema.yaml, builds a well-formed entity file with the canonical
+    3-region format (frontmatter / LINKS block / prose), and rebuilds _index.json
+    so the new entity is immediately findable.
+
+    `data` carries optional frontmatter fields (title, tags, location, serial,
+    model, last4, credential_ref, related, etc.). Anything not provided is
+    defaulted: title from slug, status='stub', confidence=1.0, today's date.
+    `prose` is appended verbatim below the LINKS block if given.
+
+    Returns {ok, slug, path} or {error}.
+    """
+    if not _SLUG_RE.match(slug or ""):
+        return _err("invalid slug format")
+    vpath = Path(vault)
+
+    # --- validate type/subtype against registry/schema.yaml ---
+    schema_path = vpath / "registry" / "schema.yaml"
+    if not schema_path.exists():
+        return _err("registry/schema.yaml not found — not a valid vault")
+    try:
+        import yaml
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        return _err(f"schema.yaml is not valid YAML: {e}")
+    types = schema.get("types", {})
+    if type_ not in types:
+        return _err(f"unknown type '{type_}' (valid: {sorted(types)})")
+    type_spec = types[type_]
+    if not isinstance(type_spec, dict):
+        return _err(f"schema type '{type_}' has an empty/invalid body in schema.yaml")
+    valid_subs = type_spec.get("subtypes", [])
+    if subtype not in valid_subs:
+        return _err(f"unknown subtype '{subtype}' for type '{type_}' "
+                    f"(valid: {valid_subs})")
+
+    # --- check for existing entity (never clobber) ---
+    entity_dir = vpath / "entities" / type_
+    entity_path = entity_dir / f"{slug}.md"
+    if entity_path.exists():
+        return _err(f"entity '{slug}' already exists at {entity_path.relative_to(vpath)}")
+
+    # --- build frontmatter dict ---
+    data = data or {}
+    from datetime import date
+    fm: dict[str, Any] = {
+        "slug": slug,
+        "type": type_,
+        "subtype": subtype,
+        "title": data.get("title") or slug.replace("-", " ").title(),
+        "status": data.get("status", "stub"),
+        "confidence": data.get("confidence", 1.0),
+        "created": data.get("created") or date.today().isoformat(),
+        "sources": data.get("sources", []),
+        "sources_hash": data.get("sources_hash") or f"manual-create-{slug}",
+    }
+
+    # Merge in any additional fields from data that aren't already set.
+    # Skip the ones we've already populated.
+    skip = {"slug", "type", "subtype", "title", "status", "confidence",
+            "created", "sources", "sources_hash"}
+    for k, v in data.items():
+        if k not in skip and v is not None:
+            fm[k] = v
+
+    # --- render entity file (reuse ingest.py's canonical writers) ---
+    from agent_vault import ingest as _ingest
+    fm_text = _ingest._dump_frontmatter(fm)
+    related = fm.get("related") or []
+    links_block = _ingest._render_link_block(related)
+    parts = [f"---\n{fm_text}---\n\n{links_block}"]
+    if prose:
+        parts.append(f"\n{prose.rstrip()}\n")
+    else:
+        parts.append("\n")
+    entity_text = "".join(parts)
+
+    # --- write atomically ---
+    try:
+        entity_dir.mkdir(parents=True, exist_ok=True)
+        tmp = str(entity_path) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(entity_text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, entity_path)
+    except OSError as e:
+        return _err(f"could not write entity: {e}")
+
+    # --- rebuild _index.json so the entity is immediately findable ---
+    try:
+        from agent_vault import build_index
+        build_index.reindex(str(vpath), quiet=True)
+    except Exception as e:  # noqa: BLE001 - index rebuild is best-effort
+        pass  # entity was written; next cadence will rebuild the index
+
+    rel = f"entities/{type_}/{slug}.md"
+    return {"ok": True, "slug": slug, "path": rel}
+
+
 def _append_submission(vault: Path, actor: str, path: str, sha: str, nbytes: int) -> None:
     """Append-only attribution log for agent contributions. Best-effort."""
     try:
@@ -254,3 +378,4 @@ def resolve_credential(vault: str, slug: str) -> dict[str, Any]:
         if "ResolverError" in name:
             return _err(str(e))
         return _err("credential resolution failed")
+
