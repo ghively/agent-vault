@@ -14,6 +14,8 @@ Commands:
     synapse resolve <slug>      resolve that reference to the actual SECRET, on demand (prints to stdout)
     synapse list [type]         list everything, or everything of one type
     synapse compact [--apply]   bound the append-only discovery logs (dry-run unless --apply)
+    synapse create <slug> --type <t> --subtype <s> --data '{...}' [--prose '...']
+                              create a new entity from structured frontmatter (no LLM)
 
 `creds` shows only the reference + which backend it routes to. `resolve` actually
 fetches the secret via the resolver registry (registry/resolvers.yaml + the
@@ -298,10 +300,48 @@ def _opt_days(args, default):
     return default
 
 
+def cmd_create(args, ents, aliases):
+    """Create a new entity from structured data — no LLM, no ingestion.
+
+    Usage: agent-vault create <slug> --type <t> --subtype <s>
+                              --data '{"title":"X",...}' [--prose "..."]
+    """
+    import json as _json
+    if not args:
+        sys.exit("usage: synapse create <slug> --type <t> --subtype <s> "
+                 "--data '{...}' [--prose '...']")
+    slug = args[0]
+    rest = args[1:]
+    type_ = subtype = data_json = prose = ""
+    i = 0
+    while i < len(rest):
+        if rest[i] == "--type" and i + 1 < len(rest):
+            type_ = rest[i + 1]; i += 2
+        elif rest[i] == "--subtype" and i + 1 < len(rest):
+            subtype = rest[i + 1]; i += 2
+        elif rest[i] == "--data" and i + 1 < len(rest):
+            data_json = rest[i + 1]; i += 2
+        elif rest[i] == "--prose" and i + 1 < len(rest):
+            prose = rest[i + 1]; i += 2
+        else:
+            i += 1
+    if not type_ or not subtype:
+        sys.exit("--type and --subtype are required")
+    try:
+        data = _json.loads(data_json) if data_json else {}
+    except _json.JSONDecodeError as e:
+        sys.exit(f"invalid --data JSON: {e}")
+    from agent_vault import mcp_tools as _mcp_tools
+    result = _mcp_tools.create(VAULT, slug, type_, subtype, data, prose)
+    if "error" in result:
+        sys.exit(f"error: {result['error']}")
+    print(f"created: {result['path']}")
+
+
 COMMANDS = {
     "find": cmd_find, "show": cmd_show, "due": cmd_due,
     "expiring": cmd_expiring, "creds": cmd_creds, "resolve": cmd_resolve,
-    "list": cmd_list, "compact": cmd_compact,
+    "list": cmd_list, "compact": cmd_compact, "create": cmd_create,
 }
 
 

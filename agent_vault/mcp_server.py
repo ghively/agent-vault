@@ -94,6 +94,17 @@ def build_mcp(vault: str | None = None) -> Any:
         AGENT_VAULT_MCP_ALLOW_RESOLVE=1 is set on the server."""
         return mcp_tools.resolve_credential(vault, slug)
 
+    @server.tool()
+    def vault_create(slug: str, type: str, subtype: str,
+                     data: dict[str, Any] | None = None,
+                     prose: str = "") -> dict[str, Any]:
+        """Create a new entity from structured frontmatter data. This is the
+        structured-data write path — it writes a valid entity file with
+        auto-filled required fields and a LINKS block from ``related:``
+        entries, then rebuilds the index. No LLM, no compiler. Pass frontmatter
+        fields (title, tags, related, location, etc.) via ``data``."""
+        return mcp_tools.create(vault, slug, type, subtype, data, prose)
+
     return server
 
 
