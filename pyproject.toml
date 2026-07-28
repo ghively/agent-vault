@@ -18,7 +18,7 @@ dependencies = ["pyyaml>=6.0", "fastapi>=0.115", "uvicorn[standard]>=0.32", "sse
 dev = ["pytest>=8.0", "pytest-timeout>=2.3", "pytest-cov>=5.0", "ruff>=0.6", "mypy>=1.11", "httpx2>=2.0", "types-PyYAML>=6.0"]
 # Optional: expose the vault to agents over the Model Context Protocol.
 # `pip install "agent-vault[mcp]"` then run `agent-vault-mcp`.
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.2,<2.0"]
 
 [project.scripts]
 agent-vault = "agent_vault.synapse:main"
@@ -27,6 +27,9 @@ agent-vault-mcp = "agent_vault.mcp_server:main"
 agent-vault-backup = "agent_vault.backup:main"
 agent-vault-migrate = "agent_vault.migrate:main"
 agent-vault-migrate-to-mtav = "agent_vault.migrate_to_mtav:main"
+agent-vault-cadence = "agent_vault.cadence:main"
+agent-vault-migrate-to-mtav = "agent_vault.migrate_to_mtav:main"
+agent-vault-cadence = "agent_vault.cadence:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_vault"]
