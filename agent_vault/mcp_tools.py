@@ -294,9 +294,9 @@ def create(vault: str, slug: str, type_: str, subtype: str,
 
     # --- render entity file (reuse ingest.py's canonical writers) ---
     from agent_vault import ingest as _ingest
-    fm_text = _ingest._dump_frontmatter(fm)
+    fm_text = _ingest._dump_frontmatter(fm)  # type: ignore[no-untyped-call]
     related = fm.get("related") or []
-    links_block = _ingest._render_link_block(related)
+    links_block = _ingest._render_link_block(related)  # type: ignore[no-untyped-call]
     parts = [f"---\n{fm_text}---\n\n{links_block}"]
     if prose:
         parts.append(f"\n{prose.rstrip()}\n")
@@ -319,8 +319,8 @@ def create(vault: str, slug: str, type_: str, subtype: str,
     # --- rebuild _index.json so the entity is immediately findable ---
     try:
         from agent_vault import build_index
-        build_index.reindex(str(vpath), quiet=True)
-    except Exception as e:  # noqa: BLE001 - index rebuild is best-effort
+        build_index.reindex(str(vpath), quiet=True)  # type: ignore[no-untyped-call]
+    except Exception:  # noqa: BLE001 - index rebuild is best-effort
         pass  # entity was written; next cadence will rebuild the index
 
     rel = f"entities/{type_}/{slug}.md"
