@@ -28,8 +28,6 @@ agent-vault-backup = "agent_vault.backup:main"
 agent-vault-migrate = "agent_vault.migrate:main"
 agent-vault-migrate-to-mtav = "agent_vault.migrate_to_mtav:main"
 agent-vault-cadence = "agent_vault.cadence:main"
-agent-vault-migrate-to-mtav = "agent_vault.migrate_to_mtav:main"
-agent-vault-cadence = "agent_vault.cadence:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_vault"]
