@@ -69,7 +69,7 @@ npx vitest run src/screens/Creds.test.tsx   # single file
 ```bash
 python -m agent_vault.validate .            # exit 0 = valid schema (the gate)
 python -m agent_vault.lint .                # exit 1 if any findings
-python -m agent_vault.run_cadence daily .   # | weekly | monthly  (cross-platform)
+python cadences/run_cadence.py daily .      # | weekly | monthly  (cross-platform)
 ```
 
 `review.py` verbs: `list | show <id> | approve <id> | reject <id> |
