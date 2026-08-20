@@ -57,11 +57,11 @@ def _make_mtav_env(tmp_path: Path) -> tuple[Path, Path]:
 
     # Create vault trees
     household = root / "household"
-    gregory = root / "gregory"
-    kevin = root / "kevin"
+    agent_a = root / "agent_a"
+    agent_b = root / "agent_b"
     _make_vault_tree(household, "household")
-    _make_vault_tree(gregory, "gregory")
-    _make_vault_tree(kevin, "kevin")
+    _make_vault_tree(agent_a, "agent_a")
+    _make_vault_tree(agent_b, "agent_b")
 
     # vaults.yaml
     vaults_yaml = {
@@ -72,14 +72,14 @@ def _make_mtav_env(tmp_path: Path) -> tuple[Path, Path]:
                 "visibility": "shared",
                 "description": "Household knowledge",
             },
-            "gregory": {
-                "path": str(gregory),
-                "owner": "gregory",
+            "agent_a": {
+                "path": str(agent_a),
+                "owner": "agent_a",
                 "visibility": "private",
             },
-            "kevin": {
-                "path": str(kevin),
-                "owner": "kevin",
+            "agent_b": {
+                "path": str(agent_b),
+                "owner": "agent_b",
                 "visibility": "private",
             },
         }
@@ -140,7 +140,7 @@ class TestSI2SlugValidation:
 
     def test_valid_slugs(self):
         assert _validate_slug("household") == "household"
-        assert _validate_slug("gregory") == "gregory"
+        assert _validate_slug("agent_a") == "agent_a"
         assert _validate_slug("agent-7") == "agent-7"
         assert _validate_slug("a.b.c") == "a.b.c"
 
@@ -177,8 +177,8 @@ class TestSI5GrantBeforeExistence:
 
     def test_denied_vault_returns_403(self, tmp_path):
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
@@ -186,23 +186,23 @@ class TestSI5GrantBeforeExistence:
         app = create_app(settings)
         client = TestClient(app)
 
-        # Gregory has no grant on "kevin" — accessing kevin should 403
-        h = {"Authorization": "Bearer greg-token", "X-Vault": "kevin"}
+        # Agent A has no grant on "agent_b" — accessing agent_b should 403
+        h = {"Authorization": "Bearer agent_a-token", "X-Vault": "agent_b"}
         r = client.get("/api/entities", headers=h)
         assert r.status_code == 403
 
     def test_nonexistent_vault_returns_403(self, tmp_path):
         """Accessing a vault that doesn't exist in the registry → 403, not 404."""
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
         ])
         reset_registry()
         settings = _mtav_settings(root)
         app = create_app(settings)
         client = TestClient(app)
 
-        h = {"Authorization": "Bearer greg-token", "X-Vault": "nonexistent"}
+        h = {"Authorization": "Bearer agent_a-token", "X-Vault": "nonexistent"}
         r = client.get("/api/entities", headers=h)
         # SI-5: 403, not 404 — can't distinguish denied from nonexistent
         assert r.status_code == 403
@@ -218,20 +218,20 @@ class TestSI6ReloadableRegistry:
 
     def test_add_token_visible_without_restart(self, tmp_path):
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
         ])
         reset_registry()
         settings = _mtav_settings(root)
         registry = get_registry(settings)
 
-        # Initial: only greg-token exists
-        assert registry.match_token("greg-token") is not None
+        # Initial: only agent_a-token exists
+        assert registry.match_token("agent_a-token") is not None
         assert registry.match_token("new-token") is None
 
         # Add a new token directly to the file
         _make_token(root, "new-token", "newcomer", [
-            {"vault": "gregory", "scopes": ["read"]},
+            {"vault": "agent_a", "scopes": ["read"]},
         ])
 
         # Invalidate + reload — the new token should be visible
@@ -240,26 +240,26 @@ class TestSI6ReloadableRegistry:
 
     def test_remove_token_visible_without_restart(self, tmp_path):
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read"]},
         ])
-        _make_token(root, "kev-token", "kevin", [
-            {"vault": "kevin", "scopes": ["read"]},
+        _make_token(root, "agent_b-token", "agent_b", [
+            {"vault": "agent_b", "scopes": ["read"]},
         ])
         reset_registry()
         settings = _mtav_settings(root)
         registry = get_registry(settings)
 
-        assert registry.match_token("kev-token") is not None
+        assert registry.match_token("agent_b-token") is not None
 
-        # Remove kev-token via the registry API
-        h = _hash_token("kev-token")
+        # Remove agent_b-token via the registry API
+        h = _hash_token("agent_b-token")
         removed = registry.remove_token(h)
         assert removed
 
-        # Next access: kev-token is gone
-        assert registry.match_token("kev-token") is None
-        assert registry.match_token("greg-token") is not None
+        # Next access: agent_b-token is gone
+        assert registry.match_token("agent_b-token") is None
+        assert registry.match_token("agent_a-token") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -273,21 +273,21 @@ class TestSI1SubsetInvariant:
     def test_subset_check_logic(self, tmp_path):
         """The grant model correctly identifies subset vs superset."""
         minter_grants = (
-            Grant(vault="gregory", scopes=frozenset({"read", "write"})),
+            Grant(vault="agent_a", scopes=frozenset({"read", "write"})),
         )
         minter = Identity(actor="admin", grants=minter_grants)
 
-        # Minter has read+write on gregory
-        assert minter.has_scope("gregory", "read")
-        assert minter.has_scope("gregory", "write")
-        assert not minter.has_scope("gregory", "resolve")
+        # Minter has read+write on agent_a
+        assert minter.has_scope("agent_a", "read")
+        assert minter.has_scope("agent_a", "write")
+        assert not minter.has_scope("agent_a", "resolve")
 
         # A delegated read-only grant is a valid subset
         delegated = Identity(actor="sub", grants=(
-            Grant(vault="gregory", scopes=frozenset({"read"})),
+            Grant(vault="agent_a", scopes=frozenset({"read"})),
         ))
-        assert delegated.has_scope("gregory", "read")
-        assert not delegated.has_scope("gregory", "write")
+        assert delegated.has_scope("agent_a", "read")
+        assert not delegated.has_scope("agent_a", "write")
 
     def test_admin_cannot_grant_beyond_own_scope(self, tmp_path):
         """An admin with read+write cannot grant resolve (superset check)."""
@@ -306,20 +306,20 @@ class TestSI1SubsetInvariant:
 class TestVaultIsolation:
     """Two agents in separate vaults cannot see each other's data."""
 
-    def test_gregory_cannot_read_kevin_vault(self, tmp_path):
+    def test_agent_a_cannot_read_agent_b_vault(self, tmp_path):
         root, household = _make_mtav_env(tmp_path)
-        # Put data in kevin's vault
-        kevin_vault = root / "kevin"
-        (kevin_vault / "_index.json").write_text(json.dumps({"entities": [
+        # Put data in agent_b's vault
+        agent_b_vault = root / "agent_b"
+        (agent_b_vault / "_index.json").write_text(json.dumps({"entities": [
             {"slug": "secret-thing", "type": "note", "path": "entities/note/secret.md"},
         ]}), encoding="utf-8")
 
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
-        _make_token(root, "kev-token", "kevin", [
-            {"vault": "kevin", "scopes": ["read", "write"]},
+        _make_token(root, "agent_b-token", "agent_b", [
+            {"vault": "agent_b", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
 
@@ -328,33 +328,33 @@ class TestVaultIsolation:
         app = create_app(settings)
         client = TestClient(app)
 
-        # Gregory → X-Vault: kevin → 403
+        # Agent A → X-Vault: agent_b → 403
         r = client.get("/api/entities", headers={
-            "Authorization": "Bearer greg-token", "X-Vault": "kevin",
+            "Authorization": "Bearer agent_a-token", "X-Vault": "agent_b",
         })
         assert r.status_code == 403
 
-        # Kevin → X-Vault: kevin → 200
+        # Agent B → X-Vault: agent_b → 200
         r = client.get("/api/entities", headers={
-            "Authorization": "Bearer kev-token", "X-Vault": "kevin",
+            "Authorization": "Bearer agent_b-token", "X-Vault": "agent_b",
         })
         assert r.status_code == 200
 
     def test_default_fallback_routes_to_own_vault(self, tmp_path):
         """An agent with write on exactly one vault → that's the default."""
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
         settings = _mtav_settings(root)
         registry = get_registry(settings)
-        ident = registry.match_token("greg-token")
+        ident = registry.match_token("agent_a-token")
         assert ident is not None
         default = registry.resolve_default_vault(ident)
-        # gregory has write on exactly one vault (gregory) → that's the default
-        assert default == "gregory"
+        # agent_a has write on exactly one vault (agent_a) → that's the default
+        assert default == "agent_a"
 
     def test_bootstrap_defaults_to_household(self, tmp_path):
         """Bootstrap (admin on *) → defaults to household."""
@@ -371,10 +371,10 @@ class TestVaultIsolation:
         assert default == "household"
 
     def test_agents_can_read_household_by_default(self, tmp_path):
-        """Gregory's token with household:read can access household."""
+        """Agent A's token with household:read can access household."""
         root, household = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
@@ -382,9 +382,9 @@ class TestVaultIsolation:
         app = create_app(settings)
         client = TestClient(app)
 
-        # Gregory reads household (has read grant)
+        # Agent A reads household (has read grant)
         r = client.get("/api/entities", headers={
-            "Authorization": "Bearer greg-token", "X-Vault": "household",
+            "Authorization": "Bearer agent_a-token", "X-Vault": "household",
         })
         assert r.status_code == 200
 
@@ -397,11 +397,11 @@ class TestVaultIsolation:
 class TestPerVaultScopeEnforcement:
     """Scope checks are per-vault, not global."""
 
-    def test_read_on_household_write_on_gregory(self, tmp_path):
-        """An agent with read on household + write on gregory cannot write household."""
+    def test_read_on_household_write_on_agent_a(self, tmp_path):
+        """An agent with read on household + write on agent_a cannot write household."""
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
@@ -409,7 +409,7 @@ class TestPerVaultScopeEnforcement:
         app = create_app(settings)
         client = TestClient(app)
 
-        h = {"Authorization": "Bearer greg-token", "X-Vault": "household"}
+        h = {"Authorization": "Bearer agent_a-token", "X-Vault": "household"}
 
         # Read OK
         assert client.get("/api/entities", headers=h).status_code == 200
@@ -429,12 +429,12 @@ class TestJobOwnership:
 
     def test_cross_vault_job_access_denied(self, tmp_path):
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
-        _make_token(root, "kev-token", "kevin", [
-            {"vault": "kevin", "scopes": ["read", "write"]},
+        _make_token(root, "agent_b-token", "agent_b", [
+            {"vault": "agent_b", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
@@ -442,28 +442,28 @@ class TestJobOwnership:
         app = create_app(settings)
         client = TestClient(app)
 
-        # Gregory creates a job in his vault
+        # Agent A creates a job in his vault
         r = client.post("/api/jobs/run", headers={
-            "Authorization": "Bearer greg-token",
+            "Authorization": "Bearer agent_a-token",
         }, json={"op": "lint", "args": ["--json"]})
         assert r.status_code == 200
         job_id = r.json()["job_id"]
 
-        # Kevin tries to access Gregory's job → 403
+        # Agent B tries to access Agent A's job → 403
         r = client.get(f"/api/jobs/{job_id}", headers={
-            "Authorization": "Bearer kev-token",
+            "Authorization": "Bearer agent_b-token",
         })
         assert r.status_code == 403
 
-        # Kevin tries to cancel Gregory's job → 403
+        # Agent B tries to cancel Agent A's job → 403
         r = client.delete(f"/api/jobs/{job_id}", headers={
-            "Authorization": "Bearer kev-token",
+            "Authorization": "Bearer agent_b-token",
         })
         assert r.status_code == 403
 
-        # Gregory can access his own job → 200
+        # Agent A can access his own job → 200
         r = client.get(f"/api/jobs/{job_id}", headers={
-            "Authorization": "Bearer greg-token",
+            "Authorization": "Bearer agent_a-token",
         })
         assert r.status_code == 200
 
@@ -516,8 +516,8 @@ class TestCrossVaultSearch:
 
     def test_search_drops_unauthorized_vaults(self, tmp_path):
         root, _ = _make_mtav_env(tmp_path)
-        _make_token(root, "greg-token", "gregory", [
-            {"vault": "gregory", "scopes": ["read", "write"]},
+        _make_token(root, "agent_a-token", "agent_a", [
+            {"vault": "agent_a", "scopes": ["read", "write"]},
             {"vault": "household", "scopes": ["read"]},
         ])
         reset_registry()
@@ -525,14 +525,14 @@ class TestCrossVaultSearch:
         app = create_app(settings)
         client = TestClient(app)
 
-        h = {"Authorization": "Bearer greg-token"}
-        # Request search across kevin (unauthorized) + gregory
-        r = client.get("/api/search?q=test&vaults=kevin,gregory", headers=h)
+        h = {"Authorization": "Bearer agent_a-token"}
+        # Request search across agent_b (unauthorized) + agent_a
+        r = client.get("/api/search?q=test&vaults=agent_b,agent_a", headers=h)
         assert r.status_code == 200
         data = r.json()
-        # kevin should be silently dropped; only gregory searched
+        # agent_b should be silently dropped; only agent_a searched
         searched = [v["name"] for v in data.get("vaults", [])]
-        assert "kevin" not in searched
+        assert "agent_b" not in searched
 
 
 # ---------------------------------------------------------------------------

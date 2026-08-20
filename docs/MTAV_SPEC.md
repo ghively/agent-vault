@@ -1,7 +1,7 @@
 # SPEC: Multi-Tenant Agent Vault (MTAV)
 
 **Status:** Reviewed v1.0 — passed 3-round MoA review (Codex + Claude Code)
-**Author:** Gregory (Hermes agent) for Gene
+**Author:** Agent A (Hermes agent) for Gene
 **Date:** 2026-07-05
 **Base:** `ghively/agent-vault` @ 01d880e (post PR #6 merge)
 **Goal:** Extend Agent Vault from single-vault to multi-tenant: many isolated
@@ -36,7 +36,7 @@ Three properties must hold:
 
 | Term | Meaning |
 |------|---------|
-| **Vault (instance)** | One running Agent Vault service process (this build stays at one process on gh-ai) |
+| **Vault (instance)** | One running Agent Vault service process (this build stays at one process on vault-host) |
 | **Enclave / KB** | One isolated knowledge-base tree (`entities/`, `raw/`, `discovery/`, `registry/`) on disk |
 | **Token** | A bearer credential mapping to an `{actor, grants}` identity |
 | **Grant** | A permission entry on a token: `{vault, scopes}` where scopes ⊆ {read, write, resolve, admin} |
@@ -70,8 +70,8 @@ search, resolve, validate, lint) plus every API handler that calls them.
 ```
 ~/.agent-vaults/
   household/            # shared family knowledge (migrated from ~/.agent-vault)
-  gregory/              # Gregory agent private enclave
-  kevin/                # Kevin agent private enclave
+  agent-a/              # Agent A agent private enclave
+  agent-b/              # Agent B agent private enclave
   unified/              # librarian compile output (Phase 3, created empty now)
   _tenant/              # MTAV control plane (registry, NOT a KB)
     vaults.yaml         # enclave registry: name -> path + owner + visibility
@@ -93,14 +93,14 @@ vaults:
     owner: gene            # human-owned
     visibility: shared     # readable by all authenticated tokens (read scope)
     description: "Household/family knowledge"
-  gregory:
-    path: ~/.agent-vaults/gregory
-    owner: gregory         # agent-owned (auto-created at first mint)
+  agent-a:
+    path: ~/.agent-vaults/agent-a
+    owner: agent-a         # agent-owned (auto-created at first mint)
     visibility: private    # only tokens with an explicit grant
-    description: "Gregory agent private KB"
-  kevin:
-    path: ~/.agent-vaults/kevin
-    owner: kevin
+    description: "Agent A agent private KB"
+  agent-b:
+    path: ~/.agent-vaults/agent-b
+    owner: agent-b
     visibility: private
   unified:
     path: ~/.agent-vaults/unified
@@ -126,21 +126,21 @@ tokens:
     grants:
       - {vault: "*", scopes: [admin]}    # all vaults, all scopes
 
-  # Gregory's self-minted token. Minimal scope ceiling by default.
+  # Agent A's self-minted token. Minimal scope ceiling by default.
   # NOTE: tokens are stored HASHED in this file (sha256); 1P holds plaintext.
-  gregory-<hash>:
-    actor: gregory
+  agent-a-<hash>:
+    actor: agent-a
     grants:
-      - {vault: gregory, scopes: [read, write, resolve]}   # own enclave only
+      - {vault: agent-a, scopes: [read, write, resolve]}   # own enclave only
       - {vault: household, scopes: [read]}                  # shared read (auto)
       # NO write on household — household is a separate, dedicated enclave
-      # (see §5.4). Gregory maintains its own KB, not household.
+      # (see §5.4). Agent A maintains its own KB, not household.
 
-  # Kevin's token.
-  kevin-<hash>:
-    actor: kevin
+  # Agent B's token.
+  agent-b-<hash>:
+    actor: agent-b
     grants:
-      - {vault: kevin, scopes: [read, write, resolve]}
+      - {vault: agent-b, scopes: [read, write, resolve]}
       - {vault: household, scopes: [read]}
 ```
 
@@ -152,10 +152,10 @@ Secrets are KB entities with a `credential_ref`. Resolution is gated by:
 
 A secret grant is additive on the token:
 ```yaml
-  gregory-<random>:
-    actor: gregory
+  agent-a-<random>:
+    actor: agent-a
     grants:
-      - {vault: gregory, scopes: [read, write, resolve]}
+      - {vault: agent-a, scopes: [read, write, resolve]}
       - {vault: household, scopes: [read]}
       - {vault: household, secret: tailscale-api-key, scopes: [resolve]}
 ```
@@ -214,7 +214,7 @@ per-agent KBs:
   (or by Gene directly). It holds the sensitive family knowledge and
   credential refs that are the vault's primary purpose. Agent KBs do NOT
   write to it.
-- **Per-agent KBs** (`gregory/`, `kevin/`, etc.) are each agent's private
+- **Per-agent KBs** (`agent-a/`, `agent-b/`, etc.) are each agent's private
   working space — their own research, notes, state, scratch knowledge. They
   are peers to household, not subordinates that merge into it.
 - Agents get **read** on household by default (so they can reference shared
@@ -234,7 +234,7 @@ writes only to `unified/` — it never merges agent KBs into household.
 |----------|--------|-----------|
 | Token storage | **Hashed** (sha256) in tokens.yaml; 1P holds plaintext | File read doesn't leak tokens; 1P is recovery path. Avoid bcrypt (lookup must scan all entries; sha256 is fine since tokens are high-entropy 40+ chars). |
 | Delegation depth | **Flat** — only bootstrap + vault-admin tokens can mint | Prevents privilege sprawl. Revisit only if a real supervisor-agent use case emerges. |
-| Agent-authored secrets | **Configurable**, default OFF (`MTAV_REQUIRE_SECRET_APPROVAL=0`) | Auto-approve + rate-limit + audit-flag for trusted agents (Gregory, Kevin). Flip ON when onboarding less-trusted agents. |
+| Agent-authored secrets | **Configurable**, default OFF (`MTAV_REQUIRE_SECRET_APPROVAL=0`) | Auto-approve + rate-limit + audit-flag for trusted agents (Agent A, Agent B). Flip ON when onboarding less-trusted agents. |
 | Household write access | **Dedicated enclave** — agents get read only; a separate household agent (or Gene) curates it | Household is the sensitive core, not a shared write surface. See §5.4. |
 | Enrollment secret rotation | **On-demand only** (no fixed cadence) | Minimal-scope ceiling means a leaked enroll secret only produces empty private enclaves — low blast radius. Rotation adds operational complexity for little gain. |
 
@@ -274,7 +274,7 @@ contradiction, deterministic for every token shape.
 
 ### 6.3 Cross-vault search (Phase 2 UI, Phase 1 API)
 
-`GET /api/search?q=...&vaults=gregory,household` — fan-out FTS across the
+`GET /api/search?q=...&vaults=agent-a,household` — fan-out FTS across the
 listed vaults, merge-ranked. Restricted to vaults the token has `read` on;
 others silently dropped.
 
@@ -442,7 +442,7 @@ as a "secret" for a colluding foothold to resolve), secret-creation is
 A secret lives once, in its owner's enclave. To share it without duplicating:
 ```
 POST /api/tenant/grants
-{token: "gregory-xxx", vault: "kevin", secret: "tailscale-key", scopes: ["resolve"]}
+{token: "agent-a-xxx", vault: "agent-b", secret: "tailscale-key", scopes: ["resolve"]}
 ```
 The resolve path checks: token has `resolve` on `{vault, secret}` OR
 `resolve` on `{vault}` (whole-vault).
@@ -475,7 +475,7 @@ The resolve path checks: token has `resolve` on `{vault, secret}` OR
 
 A librarian is a token with `read` on every private enclave + `write` on
 `unified`. It diffs corresponding entities across enclaves, flags conflicts
-(Gregory says gateway=X, Kevin says gateway=Y), compiles a merged view into
+(Agent A says gateway=X, Agent B says gateway=Y), compiles a merged view into
 `unified/`, and surfaces a reconciliation queue to Gene. It NEVER writes into
 an agent's private enclave. Explicitly deferred — but the data model
 (provenance = owner field on every entity, cross-vault search API) is built
@@ -512,7 +512,7 @@ A "Register new agent" form (enroll secret + actor name) that calls
 ~/.agent-vault/  -->  ~/.agent-vaults/household/
 ```
 - Move the tree.
-- Write `vaults.yaml` with `household` + empty `gregory`/`kevin`/`unified`.
+- Write `vaults.yaml` with `household` + empty `agent-a`/`agent-b`/`unified`.
 - Convert the existing `VAULT_TOKEN` to the bootstrap admin token in
   `tokens.yaml` (system: true, grants: ["*": admin]).
 - The existing Hermes `.env` `AGENT_VAULT_TOKEN` becomes the bootstrap token
@@ -586,7 +586,7 @@ to a test in the Phase 1+2 test suite.
 | 1P namespace collision / item overwrite | **SI-7**: `AgentVault/<vault>/<slug>` prefix enforced on writes |
 | Register spam / enclave flooding | **SI-8**: rate-limit + `MTAV_MAX_ENCLAVES` cap + idempotency |
 | Compromised agent resolves secrets outside its grant | Resolve checks token grants per (vault, secret); 1P unreachable from agents directly |
-| Vault host compromised | Vault host (gh-ai) is a tier-1 trust anchor; tight egress, dedicated 1P service account scoped to only what the vault needs, documented rotation path |
+| Vault host compromised | Vault host (vault-host) is a tier-1 trust anchor; tight egress, dedicated 1P service account scoped to only what the vault needs, documented rotation path |
 | Exfiltration via agent-authored "secret" | Rate-limit + audit-flag secret creation; optional propose→promote gate (`MTAV_REQUIRE_SECRET_APPROVAL`) |
 | Token leak | Tokens are random 40+ chars, stored hashed in tokens.yaml (plaintext only in 1P + agent env); revocation via DELETE grant/token |
 | Enrollment secret leak | `MTAV_ENROLL_SECRET` rotated by Gene; rate-limit register endpoint |
@@ -595,8 +595,8 @@ to a test in the Phase 1+2 test suite.
 
 ### 11.1 Trust anchors
 
-- **gh-ai** (Vault host): tier-1. Compromise = compromise of 1P write + all
-  enclaves. Must be hardened (already runs Hermes, Honcho, Stalwart).
+- **vault-host** (Vault host): tier-1. Compromise = compromise of 1P write + all
+  enclaves. Must be hardened (also runs other self-hosted services on the same box).
 - **Bootstrap token**: tier-1. Lives in 1P + Hermes env only.
 - **Enrollment secret**: tier-2. Gate on onboarding, not on data access.
 
@@ -618,7 +618,7 @@ to a test in the Phase 1+2 test suite.
   (prevents cross-tenant job control — see §6a.1a)
 - Cross-vault search API
 - Tests: isolation, grant enforcement, backward compat, SI-1..SI-8
-- **Deliverable:** two real vaults (household + gregory) behind one service
+- **Deliverable:** two real vaults (household + agent-a) behind one service
 
 ### Phase 2 — Credential broker + self-service onboarding
 - Vault holds `OP_SERVICE_ACCOUNT_TOKEN`; agents never see it
@@ -627,7 +627,7 @@ to a test in the Phase 1+2 test suite.
 - Agent-authored secret store → 1P (gated + audited, SI-4 + SI-7)
 - MCP made tenant-aware (§6a.2)
 - UI: grant manager, enrollment screen
-- **Deliverable:** Kevin onboarded via self-service; shared secrets granted
+- **Deliverable:** Agent B onboarded via self-service; shared secrets granted
 
 ### Phase 3 — Librarian (future, spec only)
 - Read across private enclaves, write to `unified` only

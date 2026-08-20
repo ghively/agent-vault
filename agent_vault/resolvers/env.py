@@ -11,7 +11,7 @@ Config (registry/resolvers.yaml):
 
     env:
       module: resolvers.env
-      # optional: prefix: GREGORY_   (prepended to every derived var name)
+      # optional: prefix: MYAGENT_   (prepended to every derived var name)
 
 Ref → variable mapping:
 
@@ -19,8 +19,8 @@ Ref → variable mapping:
     env://ci/deploy-key    ->   CI_DEPLOY_KEY
 
 i.e. join store + path segments with '_', uppercase, and replace any character
-that isn't a letter or digit with '_'. With `prefix: GREGORY_`, the first
-example resolves GREGORY_APP_BOFA_TOKEN instead.
+that isn't a letter or digit with '_'. With `prefix: MYAGENT_`, the first
+example resolves MYAGENT_APP_BOFA_TOKEN instead.
 """
 import os
 import re
