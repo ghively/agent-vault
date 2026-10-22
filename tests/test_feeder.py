@@ -1,11 +1,9 @@
 """Tests for the watched-folder ingestion feeder (Phase 4)."""
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure the feeders package is importable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

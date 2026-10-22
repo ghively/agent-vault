@@ -117,9 +117,12 @@ def test_duplicate_second_path_gets_manifest_entry(tmp_path):
     (misc / "aaa-original.txt").write_text(content, encoding="utf-8")
     (misc / "bbb-copy.txt").write_text(content, encoding="utf-8")
 
+    # The sample vault may already contain ingested raw files (manifest entries);
+    # those are skipped too, so measure the duplicate against that baseline.
+    already = len(ingest.load_manifest(str(vault)))
     summary = ingest.ingest(str(vault))
     assert summary["new"] == 1
-    assert summary["skipped"] == 1
+    assert summary["skipped"] == already + 1
 
     manifest = ingest.load_manifest(str(vault))
     by_path = {r.get("path"): r for r in manifest}

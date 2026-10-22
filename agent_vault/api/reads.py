@@ -33,7 +33,7 @@ async def get_settings(request: Request) -> Settings:
     In legacy mode, vault_path comes from request.state too (the auth dep sets
     it to settings.vault_path), so both paths work identically.
     """
-    s = request.app.state.settings  # type: ignore
+    s: Settings = request.app.state.settings
     vault_path = getattr(request.state, "vault_path", "") or ""
     if vault_path and vault_path != s.vault_path:
         from dataclasses import replace

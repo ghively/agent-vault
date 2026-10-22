@@ -27,6 +27,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -135,7 +136,7 @@ def migrate(
             yaml.safe_dump(vaults_yaml, f, default_flow_style=False, sort_keys=False)
 
         # tokens.yaml — bootstrap admin token
-        tokens_yaml: dict = {"tokens": {}}
+        tokens_yaml: dict[str, Any] = {"tokens": {}}
         if bootstrap_token:
             import hashlib
             h = hashlib.sha256(bootstrap_token.encode()).hexdigest()

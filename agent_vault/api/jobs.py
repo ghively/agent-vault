@@ -214,9 +214,9 @@ def _check_job_vault_access(job: Job, request: Request) -> None:
     if ident is None:
         return  # no identity resolved (e.g. auth disabled) — allow
     # Legacy mode: identity has _legacy_scopes, no per-vault grants → skip
-    if ident._legacy_scopes:  # type: ignore[attr-defined] # noqa: SLF001
+    if ident._legacy_scopes:  # noqa: SLF001
         return
-    if ident.system:  # type: ignore[attr-defined]
+    if ident.system:
         return
     if not job.vault:
         return  # job created before MTAV — no ownership to check
@@ -401,7 +401,7 @@ async def get_settings(request: Request) -> Settings:
 
     Returns a Settings with vault_path resolved from request state (MTAV).
     """
-    s = request.app.state.settings  # type: ignore
+    s: Settings = request.app.state.settings
     vault_path = getattr(request.state, "vault_path", "") or ""
     if vault_path and vault_path != s.vault_path:
         from dataclasses import replace
