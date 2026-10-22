@@ -34,6 +34,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # Force UTF-8 stdout/stderr.
 for _s in (sys.stdout, sys.stderr):
@@ -89,7 +90,7 @@ def _timestamped_name(filename: str) -> str:
 
 
 def process_inbox(vault: str, inbox: str | None = None,
-                  dry_run: bool = False) -> dict:
+                  dry_run: bool = False) -> dict[str, Any]:
     """Process all files in the inbox once.
 
     Copies each file to ``raw/<category>/<timestamped-name>`` and then runs
@@ -113,8 +114,8 @@ def process_inbox(vault: str, inbox: str | None = None,
         # have been dropped yet.
         return {"moved": [], "skipped": [], "ingest": None, "message": "inbox not present (nothing to do)"}
 
-    moved = []
-    skipped = []
+    moved: list[tuple[str, ...]] = []
+    skipped: list[tuple[str, ...]] = []
 
     files = sorted(f for f in inbox_path.iterdir() if f.is_file() and not f.name.startswith("."))
     if not files:
@@ -177,7 +178,7 @@ def process_inbox(vault: str, inbox: str | None = None,
     # Run the ingest pipeline on the vault.
     try:
         from agent_vault.ingest import ingest
-        result = ingest(str(vault_path))
+        result = ingest(str(vault_path))  # type: ignore[no-untyped-call]  # legacy untyped module
         print(f"  ingest: {result['new']} new, {result['skipped']} skipped")
         return {"moved": moved, "skipped": skipped, "ingest": result}
     except Exception as e:
