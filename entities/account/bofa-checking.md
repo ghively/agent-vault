@@ -22,6 +22,8 @@ related:
 - Held at: [[financial-institution/bank-of-america]]
 - Statements: [[document/bofa-statement-2026-01]]
 <!-- LINKS:END -->
+> **Sample data.** This entity is a hand-written demo that ships with the repository (see `DOCS.md`). It is not a real account: the name, last-4, and credential reference are fictional placeholders.
+
 
 Primary household checking account at Bank of America, account ending 4417.
 Login credentials are stored in the age secret store under banking/bofa-login

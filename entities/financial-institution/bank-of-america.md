@@ -16,3 +16,5 @@ related:
 <!-- LINKS:BEGIN -->
 - Related: [[account/bofa-checking]]
 <!-- LINKS:END -->
+> **Sample data.** This entity is a hand-written demo that ships with the repository (see `DOCS.md`). It is not a real account: the name, last-4, and credential reference are fictional placeholders.
+
