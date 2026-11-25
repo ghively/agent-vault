@@ -221,7 +221,7 @@ def test_run_job_endpoint_retains_task_reference(monkeypatch):
 
         # The endpoint now takes (request, job_request); build a minimal mock
         # request object that has .state.vault_path and .state.vault_name.
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
         mock_request = MagicMock()
         mock_request.app.state.settings = settings
         mock_request.state.vault_path = str(vault)

@@ -25,7 +25,7 @@ router = APIRouter()
 
 async def get_settings(request: Request) -> Settings:
     """Get settings, with resolved vault_path from request state (MTAV)."""
-    s = request.app.state.settings  # type: ignore
+    s: Settings = request.app.state.settings
     vault_path = getattr(request.state, "vault_path", "") or ""
     if vault_path and vault_path != s.vault_path:
         from dataclasses import replace
